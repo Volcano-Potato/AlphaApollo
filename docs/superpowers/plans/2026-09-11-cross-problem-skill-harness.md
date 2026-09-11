@@ -381,7 +381,16 @@ def skill_to_markdown(skill: Skill) -> str:
 
 
 def skill_from_markdown(text: str) -> Skill:
-    _, frontmatter, body = text.split("---", 2)
+    # Split on whole `---` LINES, not on the substring: a frontmatter value
+    # (a curator-generated `name`, say) may legitimately contain "---", and
+    # substring splitting would cut the JSON in half.
+    lines = text.splitlines()
+    fences = [i for i, line in enumerate(lines) if line.strip() == "---"]
+    if len(fences) < 2:
+        raise ValueError("skill markdown must open and close its frontmatter with `---` lines")
+    frontmatter = "\n".join(lines[fences[0] + 1:fences[1]])
+    body = "\n".join(lines[fences[1] + 1:])
+
     meta = {}
     for line in frontmatter.strip().splitlines():
         k, _, v = line.partition(":")
