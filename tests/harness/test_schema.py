@@ -40,6 +40,12 @@ def test_general_skill_has_no_topic():
     assert skill_from_markdown(skill_to_markdown(s)).topic is None
 
 
+def test_markdown_round_trip_survives_triple_dash_inside_a_field_value():
+    original = make_skill(name="foo --- bar")
+    restored = skill_from_markdown(skill_to_markdown(original))
+    assert restored == original
+
+
 def test_skill_edit_rejects_unknown_op():
     with pytest.raises(ValueError):
         SkillEdit(op="FROBNICATE", actor="topic_curator", reason="x")

@@ -105,15 +105,26 @@ def skill_to_markdown(skill: Skill) -> str:
 
 
 def skill_from_markdown(text: str) -> Skill:
-    _, frontmatter, body = text.split("---", 2)
+    lines = text.splitlines()
+    # Frontmatter delimiters are matched as whole lines (after stripping
+    # surrounding whitespace), never as a substring search over the full
+    # text. A JSON-encoded field value (e.g. an LLM-authored ``name`` like
+    # "foo --- bar") may legitimately contain the literal characters
+    # "---"; only a line that is *exactly* "---" once stripped counts as
+    # a boundary.
+    delimiter_indices = [i for i, line in enumerate(lines) if line.strip() == "---"]
+    start, end = delimiter_indices[0], delimiter_indices[1]
+    frontmatter_lines = lines[start + 1:end]
+    body_lines = lines[end + 1:]
+
     meta = {}
-    for line in frontmatter.strip().splitlines():
+    for line in frontmatter_lines:
         k, _, v = line.partition(":")
         meta[k.strip()] = json.loads(v.strip())
 
     sections: dict[str, list[str]] = {}
     current = None
-    for line in body.splitlines():
+    for line in body_lines:
         if line.startswith("## "):
             current = line[3:].strip()
             sections[current] = []
