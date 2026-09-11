@@ -28,10 +28,15 @@ This is the infrastructure half of Task A: a skill lives on disk under ``<root>/
 
 This module implements persistence, logging, and edit application (``apply()``, turning a batch
 of curator-issued ``SkillEdit``s into ADD/MERGE/REVISE/DELETE mutations under a hard capacity
-bound -- see ``apply()`` for the two-phase ordering this requires). Skill *selection*
-(budget-aware retrieval for a given problem, using ``Budget``) is a later task layered on top of
-``SkillStore``; it is not present here even though ``Budget`` (its configuration) is already
-defined, because that later task depends on the exact field names below.
+bound -- see ``apply()`` for the two-phase ordering this requires), plus per-problem skill
+*selection* (``select()``/``record_usage()``, budget-aware retrieval under ``Budget``).
+
+Selection is fully deterministic and makes zero model calls -- a deliberate deviation from the
+Evo-Harness paper (Appendix F uses Claude Sonnet 4.5 to select skills). Two reasons: (1) the
+three-arm experiment in Task C needs bit-identical selection given the same store state, so
+retrieval cannot be a source of sampling noise; (2) the mini-project's requirement to report
+"solver calls" separately from "cross-problem skill-management calls" is only an exact count, not
+an estimate, if selection itself never calls a model. See ``select()`` for the scoring formula.
 """
 
 from __future__ import annotations
@@ -75,6 +80,20 @@ _MAX_NAME_PREFIX_LEN = 60
 # store happens to have filed it.
 _SLUG_WORD = re.compile(r"[a-z0-9]+")
 _MAX_SLUG_WORDS = 8
+
+# Used by `SkillStore.select()`'s lexical-overlap term: a deliberately dumb, dependency-free
+# word-overlap heuristic (not a real IDF/BM25 implementation) so that selection needs neither a
+# model call nor a tokenizer download -- see the module docstring addendum on `select()` below
+# for why zero-model-call selection is a hard requirement here, not just an optimization.
+_SELECT_WORD = re.compile(r"[A-Za-z']+")
+_STOPWORDS = frozenset(
+    "a an and are as at be by for from has have in into is it its of on or that the "
+    "this to was were when where which with you your".split()
+)
+
+
+def _content_words(text: str) -> set[str]:
+    return {w.lower() for w in _SELECT_WORD.findall(text) if w.lower() not in _STOPWORDS}
 
 
 def _slugify_trigger(trigger: str) -> str:
@@ -333,3 +352,82 @@ class SkillStore:
         self._write_skill(skill)
         return {"skill_id": skill.id, "accepted": True, "reject_reason": None,
                 "guard_note": guard_note}
+
+    # ---- selection -----------------------------------------------------
+    @staticmethod
+    def _lexical_overlap(trigger: str, question: str) -> float:
+        """Fraction of `trigger`'s content words that also appear in `question`, in [0, 1].
+        Deliberately not a real IDF/BM25 score (see the module docstring): it needs no corpus
+        statistics, no tokenizer, and no network, so it can run inline in `select()` at zero
+        marginal cost. An empty-after-stopwords trigger (all punctuation, or nothing but
+        stopwords) scores 0.0 rather than raising a division-by-zero."""
+        trigger_words = _content_words(trigger)
+        if not trigger_words:
+            return 0.0
+        return len(trigger_words & _content_words(question)) / len(trigger_words)
+
+    def _score(self, skill: Skill, question: str) -> float:
+        return 0.3 * skill.utility() + 0.7 * self._lexical_overlap(skill.trigger, question)
+
+    def select(self, question: str, topic: str | None) -> list[Skill]:
+        """Deterministically pick up to `self.budget.b` skills relevant to `question` (and, if
+        given, scoped `topic`), under fixed per-level quotas and a total token cap.
+
+        Design is intentionally a single fixed-quota pass, not "reserve N general slots, let the
+        rest compete globally": at `budget.b == 6` with `general_max == 3`, a global-competition
+        scheme can starve topic skills down to a single slot whenever general skills happen to
+        score well on a given question. Quotas here are hard caps, never reallocated across
+        levels -- so a topic with no matching skills at all does *not* let general skills spill
+        into its unused slots to reach `b`; the resulting selection can legitimately be smaller
+        than `b`. See `test_adversarial_empty_topic_bucket_does_not_borrow_general_slack`.
+
+        Candidates are ranked once, across both levels together, by
+        `(-score, id)` -- `id` is a pure tiebreaker (never influences ranking otherwise) that
+        makes the sort total and hence independent of dict/insertion order, which is what makes
+        this fully reproducible for the Task C experiment arms. The single pass below then walks
+        that ranked list applying, in order: the overall count cap `b`, the per-level quota
+        (`general_max` / `topic_max`), and the cumulative token cap `tokens` (a skill that would
+        push the running total over budget is skipped, not treated as a hard stop, so a smaller
+        lower-ranked skill still gets a chance to fit in the remaining headroom -- see
+        `test_adversarial_token_budget_boundary_equal_vs_one_over`). A single skill whose own
+        `n_tokens` exceeds the entire budget is simply never admitted; it can never stall or loop
+        the selection, since the surrounding `for` is over a fixed, finite list.
+        """
+        candidates = [s for s in self._skills.values() if s.level == "general" or s.topic == topic]
+        ranked = sorted(candidates, key=lambda s: (-self._score(s, question), s.id))
+
+        picked: list[Skill] = []
+        used_tokens = 0
+        n_general = n_topic = 0
+        for skill in ranked:
+            if len(picked) >= self.budget.b:
+                break
+            if skill.level == "general":
+                if n_general >= self.budget.general_max:
+                    continue
+            elif n_topic >= self.budget.topic_max:
+                continue
+            if used_tokens + skill.n_tokens > self.budget.tokens:
+                continue
+            picked.append(skill)
+            used_tokens += skill.n_tokens
+            if skill.level == "general":
+                n_general += 1
+            else:
+                n_topic += 1
+        return picked
+
+    def record_usage(self, selected: list[Skill], success: bool) -> None:
+        """Update `n_selected`/`n_selected_success` (the counters `Skill.utility()` reads) for
+        each skill in `selected` and persist the change. A skill id that no longer exists in the
+        store (e.g. deleted by a curator edit that ran between `select()` and this call) is
+        silently skipped rather than raising -- a stale usage callback must never be able to
+        crash the run this harness is layered on top of; see
+        `test_adversarial_record_usage_on_a_deleted_skill_does_not_raise`."""
+        for picked in selected:
+            skill = self._skills.get(picked.id)
+            if skill is None:
+                continue
+            skill.n_selected += 1
+            skill.n_selected_success += int(success)
+            self._write_skill(skill)
