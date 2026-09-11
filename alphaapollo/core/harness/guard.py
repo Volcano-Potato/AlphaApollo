@@ -42,7 +42,15 @@ import re
 from alphaapollo.core.harness.schema import CandidateMemory
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
-_NUMBER = re.compile(r"(?<![\w.])\d+(?![\w.])")
+# Negative lookahead is `(?!\.?\d)`, NOT `(?![\w.])`: the latter looks tighter but silently
+# excludes any integer immediately followed by a sentence-ending period ("The answer is 50."),
+# because a bare "." after a digit run trips `[\w.]` even when no digit follows the dot. That
+# made the single most natural way to write a leak -- ending the sentence right after the
+# number -- invisible to both answer_leak and numeric_coincidence. `(?!\.?\d)` only excludes an
+# optional "." that is itself followed by a digit, i.e. an actual decimal point ("738.5"),
+# while leaving a trailing "." (end of sentence) alone. The trailing `(?!\w)` still blocks
+# a digit run from matching inside an identifier ("abc738", "738abc").
+_NUMBER = re.compile(r"(?<![\w.])\d+(?!\.?\d)(?!\w)")
 _NGRAM = 8
 _NON_ASCII_RATIO = 0.05
 

@@ -1,4 +1,4 @@
-from alphaapollo.core.harness.guard import validate_skill
+from alphaapollo.core.harness.guard import _NUMBER, validate_skill
 from alphaapollo.core.harness.schema import CandidateMemory
 
 QUESTION = ("Find the number of ordered pairs of positive integers (a, b) such that "
@@ -37,7 +37,7 @@ def test_verbatim_question_span_is_rejected():
 
 
 def test_ground_truth_digits_next_to_an_assertion_cue_are_rejected():
-    ok, reason = check(candidate(failure_mode="Forgetting that the answer is 738 here."))
+    ok, reason = check(candidate(failure_mode="Forgetting that the answer is 738."))
     assert ok is False and reason == "answer_leak"
 
 
@@ -77,3 +77,45 @@ def test_assertion_cue_on_the_same_line_still_rejects_across_all_three_sections(
         c = candidate(**{field: "The solution equals 50 in this family."})
         ok, reason = validate_skill(c, question_texts=[QUESTION], ground_truths=["50"])
         assert (ok, reason) == (False, "answer_leak"), f"missed a leak in {field}"
+
+
+# _NUMBER underpins both answer_leak and numeric_coincidence, so it gets its own direct
+# regression coverage instead of being exercised only indirectly through validate_skill().
+# The negative lookahead used to be `(?![\w.])`, which -- meaning to exclude decimals like
+# "738.5" -- also excluded any number immediately followed by a sentence-ending period
+# ("The answer is 50."), making that the single most natural way to write a leak invisible
+# to every downstream check. `(?!\.?\d)(?!\w)` excludes only a "." that is itself followed
+# by a digit (an actual decimal point) while still blocking identifier-embedded digit runs.
+def test_number_regex_sees_a_digit_run_immediately_before_a_sentence_period():
+    assert _NUMBER.findall("The answer is 50.") == ["50"]
+
+
+def test_number_regex_sees_a_digit_run_before_a_period_with_no_trailing_context():
+    assert _NUMBER.findall("n <= 50.") == ["50"]
+
+
+def test_number_regex_sees_a_bare_digit_run_followed_only_by_a_period():
+    assert _NUMBER.findall("50.") == ["50"]
+
+
+def test_number_regex_still_excludes_a_true_decimal():
+    assert _NUMBER.findall("738.5") == []
+
+
+def test_number_regex_still_excludes_a_leading_zero_decimal():
+    assert _NUMBER.findall("0.375") == []
+
+
+def test_number_regex_still_excludes_digits_embedded_in_an_identifier():
+    assert _NUMBER.findall("abc738") == []
+    assert _NUMBER.findall("738abc") == []
+
+
+def test_number_regex_still_excludes_a_dotted_version_string():
+    assert _NUMBER.findall("v1.2.3") == []
+
+
+def test_number_regex_still_matches_parenthesized_and_punctuated_numbers():
+    assert _NUMBER.findall("(50)") == ["50"]
+    assert _NUMBER.findall("50, and") == ["50"]
+    assert _NUMBER.findall("answer: 50") == ["50"]
