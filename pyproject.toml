@@ -88,3 +88,10 @@ verl = [
   "version/*",
   "trainer/config/*.yaml"
 ]
+
+# -------------------------------
+# tool.pytest
+# -------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "alphaapollo/core/generation"]
