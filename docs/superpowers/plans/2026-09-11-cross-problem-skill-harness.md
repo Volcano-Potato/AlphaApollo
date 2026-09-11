@@ -446,8 +446,26 @@ git commit -m "feat(harness): skill schema with markdown round-trip serializatio
 1. 非英文（非 ASCII 字符占比 > 5%）
 2. `lesson` 词数 > 60，或三段合计词数 > 200
 3. 与任一题面存在 8-gram 重合
-4. 文本中出现与任一 GT 相同的孤立数字
+4. 出现与任一 GT 相同的孤立数字，**且同一行内有答案断言词**
 5. 任一必填段为空
+
+**返回值语义**：`(accepted, note)`。`accepted=False` 时 `note` 是拒绝原因；`accepted=True` 时 `note` 为 `None` 或一个**告警标签**（目前只有 `"numeric_coincidence"`）。
+
+### 为什么第 4 条要加"断言词"限定（实测依据）
+
+原设计是"数字 == 任一 GT 即拒"。实测该规则的误杀率不可接受：
+
+- AIME 答案是 0–999 的整数；adaptation 池（`gneubig/aime-1983-2024`，2018–2022，150 题）中 **4% 的答案正好是 4 / 10 / 20 / 50 这类 skill 会自然写到的边界数字**。
+- 一个 batch 8 题，失败题才产生候选；4B 模型通常错 6–8 题，故每批有 6–8 个 GT 参与比对。
+- 一条含常见边界数字的候选被误判的概率：失败 6 题时 **21.7%**，失败 8 题时 **27.9%**。
+
+也就是说「先暴力枚举到 n ≤ 50 再推广」这类**本项目最想学到的 skill**，约每 4 条被误杀 1 条。危害不是少几条 skill，而是**静默压制 harness 增长**，最终表现为"Evo-Harness 没有提升"，却把原因误导向任务相似度或 skill 质量。
+
+同时，GT 泄漏的主通道**早已被结构性堵死**：`build_reflect_context()` 的签名里没有 `ground_truth` 参数；Reflect 只在失败时触发（模型自己的答案必然 ≠ GT）；`informalmath_verify` 实测只输出 `Matches ground truth: True/False` 布尔值而非答案本身；verifier report 进 Reflect 前还会剥掉该行。残留通道只剩"verifier 自己独立做对了并在报告里写出答案"，概率很低。
+
+结论：用 1/4 的误杀率去防一条已被堵死的通道不划算。加断言词限定后，`The answer is 50` 仍被拦截，`Brute-force n <= 50` 放行，且共现但无断言词的情况记 `numeric_coincidence` 留痕 —— 跑完实验后这个计数直接量化了旧规则会误杀多少，可写进 README 的防泄漏设计一节。
+
+其余四条检查（空段 / 非英文 / 长度 / 8-gram 题面重合）保持严格不变。8-gram 重合几乎不可能是巧合，是拦截抄题面的主力。
 
 - [ ] **Step 1: 写失败的测试**
 
@@ -492,14 +510,37 @@ def test_verbatim_question_span_is_rejected():
     assert ok is False and reason == "question_overlap"
 
 
-def test_ground_truth_digits_are_rejected():
-    ok, reason = check(candidate(failure_mode="Forgetting that the answer is 738 here."))
+def test_ground_truth_digits_next_to_an_assertion_cue_are_rejected():
+    ok, reason = check(candidate(failure_mode="Forgetting that the answer is 738."))
     assert ok is False and reason == "answer_leak"
 
 
 def test_numbers_unrelated_to_ground_truth_are_allowed():
     ok, reason = check(candidate(lesson="- Brute-force the range n <= 50 first."))
     assert ok is True and reason is None
+
+
+def test_a_bound_that_merely_coincides_with_a_ground_truth_is_kept_but_flagged():
+    """Measured on the real adaptation pool: 4% of AIME answers are exactly the
+    round numbers a skill uses as a bound, so a bare equality test rejects
+    21-28% of the enumerate-first skills this project exists to learn."""
+    ok, reason = validate_skill(candidate(lesson="- Brute-force the range n <= 50 first."),
+                                question_texts=[QUESTION], ground_truths=["50"])
+    assert ok is True and reason == "numeric_coincidence"
+
+
+def test_an_assertion_cue_on_another_line_does_not_trigger_a_reject():
+    leaky_looking = "- Verify your answer numerically.\n- Brute-force the range n <= 50 first."
+    ok, reason = validate_skill(candidate(lesson=leaky_looking),
+                                question_texts=[QUESTION], ground_truths=["50"])
+    assert ok is True and reason == "numeric_coincidence"
+
+
+def test_assertion_cue_on_the_same_line_still_rejects_across_all_three_sections():
+    for field in ("trigger", "lesson", "failure_mode"):
+        c = candidate(**{field: f"The solution equals 50 in this family."})
+        ok, reason = validate_skill(c, question_texts=[QUESTION], ground_truths=["50"])
+        assert (ok, reason) == (False, "answer_leak"), f"missed a leak in {field}"
 
 
 def test_overlong_lesson_is_rejected():
@@ -529,9 +570,20 @@ import re
 from alphaapollo.core.harness.schema import CandidateMemory
 
 _WORD = re.compile(r"[A-Za-z0-9']+")
-_NUMBER = re.compile(r"(?<![\w.])\d+(?![\w.])")
+# `(?!\.?\d)` excludes decimals (738.5) WITHOUT excluding a sentence-final
+# digit run. The earlier `(?![\w.])` did both, so "The answer is 50." — the most
+# natural way to leak one — was invisible to the answer_leak check entirely.
+_NUMBER = re.compile(r"(?<![\w.])\d+(?!\.?\d)(?!\w)")
 _NGRAM = 8
 _NON_ASCII_RATIO = 0.05
+
+# Phrases that assert a value IS the answer, as opposed to using it as a bound,
+# a modulus, or a step count. Kept deliberately tight: every added cue trades a
+# caught leak for false rejections of ordinary method text.
+_ASSERTION_CUE = re.compile(
+    r"\b(answers?|solutions?|equals?|results?|is\s+exactly|turns?\s+out\s+to\s+be)\b",
+    re.IGNORECASE,
+)
 
 
 def _words(text: str) -> list[str]:
@@ -573,16 +625,28 @@ def validate_skill(
     gt_numbers = set()
     for gt in ground_truths:
         gt_numbers.update(_NUMBER.findall(gt))
-    if gt_numbers & set(_NUMBER.findall(blob)):
-        return False, "answer_leak"
 
-    return True, None
+    # A number equal to a ground truth is only a leak when the text asserts it
+    # AS an answer. AIME answers are 0-999, and 4% of the adaptation pool are
+    # exactly the round numbers a skill uses as a bound, so a bare equality test
+    # rejects 21-28% of "enumerate a small range first" skills — the very skills
+    # this project exists to learn. Coincidence is kept and flagged instead.
+    coincidence = False
+    for line in blob.splitlines():
+        hits = gt_numbers & set(_NUMBER.findall(line))
+        if not hits:
+            continue
+        if _ASSERTION_CUE.search(line):
+            return False, "answer_leak"
+        coincidence = True
+
+    return True, "numeric_coincidence" if coincidence else None
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `./scripts/run_tests.sh tests/harness/test_guard.py -v`
-Expected: PASS，7 passed
+Expected: PASS，10 passed
 
 - [ ] **Step 5: 提交**
 
@@ -1104,43 +1168,54 @@ Expected: FAIL —— `AttributeError: 'SkillStore' object has no attribute 'app
 
     def _apply_one(self, edit, problem_idx, question_texts, ground_truths) -> dict:
         if edit.op == "SKIP":
-            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": "skipped"}
+            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": "skipped",
+                    "guard_note": None}
 
         if edit.op == "DELETE":
             existed = edit.skill_id in self._skills
             self._delete_skill(edit.skill_id)
             return {"skill_id": edit.skill_id, "accepted": existed,
-                    "reject_reason": None if existed else "unknown_skill_id"}
+                    "reject_reason": None if existed else "unknown_skill_id",
+                    "guard_note": None}
 
         if edit.payload is None:
-            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": "missing_payload"}
+            return {"skill_id": edit.skill_id, "accepted": False,
+                    "reject_reason": "missing_payload", "guard_note": None}
 
-        ok, reason = validate_skill(edit.payload, question_texts=question_texts,
-                                    ground_truths=ground_truths)
+        ok, note = validate_skill(edit.payload, question_texts=question_texts,
+                                  ground_truths=ground_truths)
         if not ok:
-            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": reason}
+            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": note,
+                    "guard_note": None}
+        # `note` may be an advisory tag on an accepted candidate (currently only
+        # "numeric_coincidence"). Log it: its count is what quantifies how many
+        # skills a bare GT-equality rule would have thrown away.
+        guard_note = note
 
         if edit.op in ("REVISE", "MERGE"):
             target = self._skills.get(edit.skill_id)
             if target is None:
                 return {"skill_id": edit.skill_id, "accepted": False,
-                        "reject_reason": "unknown_skill_id"}
+                        "reject_reason": "unknown_skill_id", "guard_note": None}
             target.trigger = edit.payload.trigger
             target.lesson = edit.payload.lesson
             target.failure_mode = edit.payload.failure_mode
             target.evidence = sorted(set(target.evidence) | set(edit.payload.evidence))
             target.revised_at = sorted(set(target.revised_at) | {problem_idx})
             self._write_skill(target)
-            return {"skill_id": target.id, "accepted": True, "reject_reason": None}
+            return {"skill_id": target.id, "accepted": True, "reject_reason": None,
+                    "guard_note": guard_note}
 
         # ADD
         level = edit.payload.scope_hint
         used, cap = self._occupancy(level, edit.payload.topic)
         if used >= cap:
-            return {"skill_id": None, "accepted": False, "reject_reason": "capacity_full"}
+            return {"skill_id": None, "accepted": False, "reject_reason": "capacity_full",
+                    "guard_note": guard_note}
         skill = self._materialize(edit.payload, problem_idx)
         self._write_skill(skill)
-        return {"skill_id": skill.id, "accepted": True, "reject_reason": None}
+        return {"skill_id": skill.id, "accepted": True, "reject_reason": None,
+                "guard_note": guard_note}
 ```
 
 - [ ] **Step 4: 运行测试确认通过**
