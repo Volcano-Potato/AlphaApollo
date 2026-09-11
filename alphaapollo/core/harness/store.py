@@ -37,12 +37,30 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from alphaapollo.core.harness.render import count_tokens
 from alphaapollo.core.harness.schema import Skill, skill_from_markdown, skill_to_markdown
+
+# ``Skill.name`` is not a trusted, developer-controlled constant: later tasks have a curator
+# (an LLM) mint it, e.g. as a kebab-case slug of the trigger. Two independent problems follow
+# from ever using it as a filename verbatim:
+#   1. Collision: two skills with different ids can end up with the same (or same-looking)
+#      name, silently overwriting one another's file on disk while the in-memory dict (keyed
+#      by id) still holds both -- an in-memory/on-disk split that only surfaces on the next
+#      reload, with no error anywhere.
+#   2. Path traversal: a malformed name like "../../pwned" writes outside ``skills_dir``
+#      entirely, and can never be found again by ``reload()`` (which only globs inside
+#      ``skills_dir``), i.e. a silent, unrecoverable write to the wrong place.
+# The fix: uniqueness is the id's job, not the name's. The filename is a sanitized,
+# human-readable name prefix plus the skill's own (already-unique) id, so a collision in
+# ``name`` can never collide on disk, and a malformed ``name`` can never escape the directory.
+_NAME_DISALLOWED = re.compile(r"[^a-z0-9-]+")
+_DASH_RUN = re.compile(r"-+")
+_MAX_NAME_PREFIX_LEN = 60
 
 
 @dataclass
@@ -104,16 +122,31 @@ class SkillStore:
         if skill.level == "topic" and not skill.topic:
             raise ValueError(f"skill {skill.id!r} has level='topic' but topic is missing (a topic skill must set a non-empty topic)")
 
+    @staticmethod
+    def _safe_filename(skill: Skill) -> str:
+        """Filename for ``skill``: a sanitized, truncated ``name`` prefix (for human
+        readability, e.g. when eyeballing ``skills/`` or citing a file in the README) plus the
+        skill's own globally-unique ``id`` as the actual uniqueness/collision guarantee, so two
+        skills can never contend for the same path regardless of what ``name`` either of them
+        was given. Disallowed characters (anything outside ``[a-z0-9-]``, including path
+        separators, dots, whitespace, and non-ASCII) are replaced with ``-``; runs of ``-`` are
+        collapsed and leading/trailing ``-`` stripped, so ``"../../pwned"`` sanitizes to
+        ``"pwned"`` rather than escaping ``skills_dir``. If the sanitized prefix is empty (e.g.
+        the name was entirely disallowed characters), the id alone is used as the filename."""
+        prefix = _DASH_RUN.sub("-", _NAME_DISALLOWED.sub("-", skill.name.lower())).strip("-")
+        prefix = prefix[:_MAX_NAME_PREFIX_LEN].strip("-")
+        return f"{prefix}--{skill.id}.md" if prefix else f"{skill.id}.md"
+
     def _write_skill(self, skill: Skill) -> None:
         self._validate_level_topic(skill)
         skill.n_tokens = count_tokens(f"{skill.trigger}\n{skill.lesson}\n{skill.failure_mode}")
-        (self.skills_dir / f"{skill.name}.md").write_text(skill_to_markdown(skill), encoding="utf-8")
+        (self.skills_dir / self._safe_filename(skill)).write_text(skill_to_markdown(skill), encoding="utf-8")
         self._skills[skill.id] = skill
 
     def _delete_skill(self, skill_id: str) -> None:
         skill = self._skills.pop(skill_id, None)
         if skill is not None:
-            (self.skills_dir / f"{skill.name}.md").unlink(missing_ok=True)
+            (self.skills_dir / self._safe_filename(skill)).unlink(missing_ok=True)
 
     def _next_id(self) -> str:
         """Derived from the ids currently on disk (``self._skills``, populated by ``reload()``)

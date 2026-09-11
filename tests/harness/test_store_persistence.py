@@ -93,3 +93,73 @@ def test_write_skill_rejects_a_topic_skill_without_a_topic(tmp_path):
     bad.topic = None  # now inconsistent: topic level, missing topic
     with pytest.raises(ValueError, match="topic"):
         store._write_skill(bad)
+
+
+def test_two_skills_sharing_a_name_get_distinct_files_and_both_survive_reload(tmp_path):
+    """`name` is not a uniqueness guarantee (it will eventually be minted by an LLM curator),
+    so two skills with different ids but the same name must not contend for one file on disk --
+    the id, not the name, is what makes the filename unique."""
+    store = SkillStore(tmp_path)
+    a = skill(1)
+    a.name = "same-name"
+    b = skill(2)
+    b.name = "same-name"
+    store._write_skill(a)
+    store._write_skill(b)
+
+    on_disk = list((tmp_path / "skills").glob("*.md"))
+    assert len(on_disk) == 2
+
+    reopened = SkillStore(tmp_path)
+    got = {s.id: s for s in reopened.all()}
+    assert set(got) == {"sk_0001", "sk_0002"}
+    assert got["sk_0001"].name == "same-name" and got["sk_0002"].name == "same-name"
+    assert got["sk_0001"].lesson == "- Lesson 1." and got["sk_0002"].lesson == "- Lesson 2."
+
+
+def test_path_traversal_in_name_does_not_escape_the_skills_directory(tmp_path):
+    store = SkillStore(tmp_path)
+    s = skill(1)
+    s.name = "../../pwned"
+    store._write_skill(s)
+
+    on_disk = list((tmp_path / "skills").glob("*.md"))
+    assert len(on_disk) == 1
+    assert on_disk[0].parent == tmp_path / "skills"
+
+    # No file escaped anywhere above skills/: tmp_path itself must contain only the
+    # `skills` directory (no rogue `pwned.md` sibling, no traversal into its parent either).
+    assert [p.name for p in tmp_path.iterdir()] == ["skills"]
+    assert not (tmp_path.parent / "pwned.md").exists()
+
+    reopened = SkillStore(tmp_path).all()
+    assert len(reopened) == 1 and reopened[0].id == "sk_0001"
+
+
+def test_name_with_spaces_uppercase_and_non_ascii_is_sanitized_and_reloadable(tmp_path):
+    store = SkillStore(tmp_path)
+    s = skill(1)
+    s.name = "Some Name WITH 空格 and CAPS"
+    store._write_skill(s)
+
+    on_disk = list((tmp_path / "skills").glob("*.md"))
+    assert len(on_disk) == 1
+    filename = on_disk[0].name
+    assert filename.endswith("--sk_0001.md")
+    prefix = filename[: -len("--sk_0001.md")]
+    assert all(ch.islower() or ch.isdigit() or ch == "-" for ch in prefix)
+    assert " " not in prefix
+
+    reopened = SkillStore(tmp_path).all()
+    assert len(reopened) == 1 and reopened[0].id == "sk_0001"
+
+
+def test_delete_skill_removes_the_file_under_the_new_naming_scheme(tmp_path):
+    store = SkillStore(tmp_path)
+    s = skill(1)
+    store._write_skill(s)
+    assert list((tmp_path / "skills").glob("*.md"))
+
+    store._delete_skill("sk_0001")
+    assert list((tmp_path / "skills").glob("*.md")) == []
+    assert SkillStore(tmp_path).all() == []
