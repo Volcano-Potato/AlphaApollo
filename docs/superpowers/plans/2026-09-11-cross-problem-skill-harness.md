@@ -21,10 +21,18 @@
 - **测试不得发起真实网络请求。** 所有涉及 LLM 的 task 用 stub agent。
 - 代码风格跟随仓库现有配置：`ruff`，`line-length = 300`。
 
+**环境**（已于 2026-09-11 验证可用）：conda 环境 `alphaapollo-dev`（Python 3.12.14, macOS arm64），`pip install -e . --no-deps` + 手工最小依赖集。已验证可 import：`Agent`、`run_problem`、`create_runtime_for_problem`、`load_informal_math_data`、`pandas/openai/omegaconf/fire`、`wandb 0.30.0`、`pytest 9.1.1`、`ruff 0.16.7`。
+
+⚠️ **两个必须知道的环境事实**：
+
+1. **`alphaapollo` 包并未被安装**。`pyproject.toml` 的 `packages.find where = ["alphaapollo/core/generation"]` 只暴露了 `verl`；实测 `cd /tmp && python -c "import alphaapollo"` 报 `ModuleNotFoundError`。**所有命令必须从仓库根目录执行**，或让 PYTHONPATH 包含它。`tests/conftest.py`（Task 0）与 `[tool.pytest.ini_options].pythonpath` 负责在测试里兜住这一点。
+2. **`alphaapollo/core/__init__.py` 的最后一行是裸调用 `ensure_verl_alias()`**，无条件加载整个 verl 栈（ray / tensordict / torch / transformers）。实测 `import alphaapollo.core` 耗时约 2.9s。这是硬编码的包级耦合，绕不开；但该开销在一次 pytest session 内只付一次，不影响 TDD 循环，因此 harness 包保持在 `alphaapollo/core/harness/` 不动。
+
 **运行测试的标准命令**（每个 task 的验证步骤都用它）：
 
 ```bash
-cd AlphaApollo && PYTHONPATH="$PWD:$PWD/alphaapollo/core/generation" python -m pytest tests/harness -v
+conda activate alphaapollo-dev
+cd AlphaApollo && ./scripts/run_tests.sh -v
 ```
 
 **分支**：`feat/cross-problem-skill-harness`（已创建）。
@@ -3566,10 +3574,12 @@ git commit -m "feat(config): three order-matched arm configs with enforced parit
 
 ---
 
-## Day 1 阻塞项（开始 Task 0 之前完成）
+## Day 1 阻塞项
 
-1. `pip install -e . --no-deps` + 手工装 `torch(cpu) ray tensordict pandas transformers omegaconf fire openai datasets pyarrow wandb pytest`，跑通 evo 路径 2 题并**录制轨迹**（Task 8/9/14 的 fixture 来源）。注意 `setup.py:28-55` 含 `qwen-vl-utils[decord]`、`rdkit`、`vllm`，直接 `pip install -e .` 在 macOS 上会失败。
-2. 实测 20 次 API 调用的延迟分布，以及 24 并发（8 × 3 arm）是否限流 → 回填设计文档 §8/§9。
-3. 确定带年份元数据的 AIME 数据源（`math-ai/aime24` 只有 2024 一年，不够用）。
-4. 审计 `informalmath_verify` 的实际输出格式，确认 Task 8 的 `_GT_CHANNEL` 正则与 Task 14 的 `_VERIFY_TAG` 能覆盖。
-5. 核对 `a-evolve` 的 LICENSE，供 README 归属声明使用。
+- [x] **1. 环境** —— 完成并验证（2026-09-11）。conda `alphaapollo-dev`，`pip install -e . --no-deps` + 最小依赖集；跳过 flash-attn / vllm / sglang / liger-kernel / torch-memory-saver（CUDA-only，evo 路径不需要）。代价：`workflows.rl` / `workflows.sft` 在本机跑不了，但本计划全部 15 个 task 都不依赖它们。
+- [ ] **2. API 实测** —— 20 次调用的延迟分布 + 24 并发（8 × 3 arm）是否限流 → 回填设计文档 §8 的 wall-clock 与 §9 的排期。**这是唯一可能推翻排期的未知数。**
+- [ ] **3. AIME 数据源** —— 找到带年份元数据的数据集（`math-ai/aime24` 只有 2024 一年）。**Task 11 / 12 / 15 都依赖它**，且存在"找不到"的真实风险。
+- [ ] **4. 泄漏审计** —— 跑通 evo 路径 2 题并**录制真实轨迹**（同时作为 Task 8/9/14 的 fixture 来源），核对 `informalmath_verify` 的实际输出格式，确认 Task 8 的 `_GT_CHANNEL` 正则与 Task 14 的 `_VERIFY_TAG` 能覆盖。
+- [ ] **5. LICENSE** —— 核对 `a-evolve` 的 LICENSE，供 README 归属声明使用。
+
+阻塞关系：Task 0–10、13 不依赖任何未完成项，**可以立即开工**。Task 11/12/15 需要第 3 项。Task 8/9/14 的 fixture 质量取决于第 4 项（但用合成 fixture 也能先写完测试）。
