@@ -1432,6 +1432,35 @@ def test_seed_is_injected_into_every_request(agent):
     assert agent._completions.kwargs_seen[0]["seed"] == 1234
 
 
+def test_a_provider_that_rejects_seed_falls_back_instead_of_failing(agent):
+    """Not every OpenAI-compatible provider accepts `seed`; a 400 on an unknown
+    parameter must not take down the whole run."""
+    calls = {"n": 0}
+    original_create = agent._completions.create
+
+    def picky_create(**kwargs):
+        calls["n"] += 1
+        if "seed" in kwargs:
+            raise TypeError("Unrecognized request argument supplied: seed")
+        return original_create(**kwargs)
+
+    agent._completions.create = picky_create
+
+    acc = CallAccountant()
+    uninstall = install_accounting(acc, seed=1234)
+    try:
+        with role_scope("solver"):
+            assert agent.get_action_from_gpt("q") == "an answer"
+        with role_scope("solver"):
+            agent.get_action_from_gpt("q")
+    finally:
+        uninstall()
+
+    # first call retries without seed; the second must not retry again
+    assert calls["n"] == 3
+    assert acc.calls["solver"] == 2
+
+
 def test_patch_preserves_the_original_return_value(agent):
     acc = CallAccountant()
     uninstall = install_accounting(acc)
@@ -1489,10 +1518,13 @@ from __future__ import annotations
 import contextlib
 import contextvars
 import functools
+import logging
 from collections import defaultdict
 from typing import Callable
 
 from alphaapollo.core.generation.evolving.utils.agent import Agent
+
+log = logging.getLogger(__name__)
 
 SOLVER_ROLES = ("solver", "summarizer", "aggregator")
 MGMT_ROLES = ("reflect", "topic_curator", "general_curator", "offline_labeling")
@@ -1541,6 +1573,7 @@ def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -
     patch covers every call site without editing upstream files.
     """
     original = Agent.get_action_from_gpt
+    seed_supported = {"value": seed is not None}
 
     @functools.wraps(original)
     def patched(self, obs):
@@ -1552,10 +1585,21 @@ def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -
         kwargs = dict(model=self.model_name, messages=messages,
                       temperature=self.temperature, max_tokens=self.max_tokens,
                       n=1, stop=None)
-        if seed is not None:
+        if seed_supported["value"]:
             kwargs["seed"] = seed
 
-        response = self.client.chat.completions.create(**kwargs)
+        try:
+            response = self.client.chat.completions.create(**kwargs)
+        except Exception as exc:  # noqa: BLE001
+            # Not every OpenAI-compatible provider accepts `seed`. Degrade once,
+            # loudly, rather than failing every call for the rest of the run.
+            if not (seed_supported["value"] and "seed" in str(exc).lower()):
+                raise
+            log.warning("provider rejected `seed`; continuing without it. "
+                        "Reproducibility is reduced — record this in the README.")
+            seed_supported["value"] = False
+            kwargs.pop("seed", None)
+            response = self.client.chat.completions.create(**kwargs)
 
         usage = getattr(response, "usage", None)
         accountant.record(_current_role.get(),
@@ -1578,7 +1622,7 @@ def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `./scripts/run_tests.sh tests/harness/test_accounting.py -v`
-Expected: PASS，6 passed
+Expected: PASS，7 passed
 
 - [ ] **Step 5: 提交**
 
@@ -3689,7 +3733,7 @@ python -m alphaapollo.core.generation.evolving.evolving_harness_main \
 - [ ] **Step 4: 运行全量回归**
 
 Run: `./scripts/run_tests.sh -v`
-Expected: PASS，全部测试通过（130 项）
+Expected: PASS，全部测试通过（131 项）
 
 - [ ] **Step 5: 提交**
 
