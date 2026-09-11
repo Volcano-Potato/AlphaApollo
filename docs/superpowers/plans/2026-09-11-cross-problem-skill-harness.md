@@ -193,7 +193,8 @@ git commit -m "test: add pytest harness scaffolding and package boundary guard"
 - Consumes: 无
 - Produces:
   - `@dataclass Skill`：字段 `id: str, name: str, level: str, topic: str | None, trigger: str, lesson: str, failure_mode: str, evidence: list[str], created_at: int, revised_at: list[int], n_selected: int, n_selected_success: int, n_tokens: int`
-  - `@dataclass CandidateMemory`：`trigger: str, lesson: str, failure_mode: str, scope_hint: str, topic: str | None, evidence: list[str]`
+  - `@dataclass CandidateMemory`：`trigger: str, lesson: str, failure_mode: str, scope_hint: str, topic: str | None, evidence: list[str], action_hint: str = "NEW", target_id: str | None = None`
+    - `action_hint ∈ {"NEW", "ENHANCE"}`，对齐论文附录 E.1 的 *"decide NEW, ENHANCE, or NONE"*（NONE 时 Reflect 整体返回 `None`，不构造 CandidateMemory）。`target_id` 只在 ENHANCE 时有值，给 curator 一个偏向 MERGE/REVISE 的强信号。
   - `@dataclass SkillEdit`：`op: str, actor: str, reason: str, skill_id: str | None = None, payload: CandidateMemory | None = None`
   - `OPS: frozenset = {"ADD", "MERGE", "REVISE", "DELETE", "SKIP"}`
   - `skill_to_markdown(skill: Skill) -> str`
@@ -260,6 +261,18 @@ def test_candidate_memory_rejects_unknown_scope_hint():
                         scope_hint="sideways", topic=None, evidence=[])
 
 
+def test_candidate_memory_defaults_to_a_new_skill_proposal():
+    c = CandidateMemory(trigger="t", lesson="l", failure_mode="f",
+                        scope_hint="topic", topic="number_theory", evidence=[])
+    assert c.action_hint == "NEW" and c.target_id is None
+
+
+def test_candidate_memory_rejects_unknown_action_hint():
+    with pytest.raises(ValueError):
+        CandidateMemory(trigger="t", lesson="l", failure_mode="f", scope_hint="topic",
+                        topic="number_theory", evidence=[], action_hint="OBLITERATE")
+
+
 def test_ops_frozen_set_is_exactly_the_five_operators():
     assert OPS == frozenset({"ADD", "MERGE", "REVISE", "DELETE", "SKIP"})
 ```
@@ -283,6 +296,7 @@ from typing import Any
 OPS = frozenset({"ADD", "MERGE", "REVISE", "DELETE", "SKIP"})
 LEVELS = frozenset({"general", "topic"})
 SCOPE_HINTS = frozenset({"general", "topic"})
+ACTION_HINTS = frozenset({"NEW", "ENHANCE"})
 
 
 @dataclass
@@ -317,10 +331,16 @@ class CandidateMemory:
     scope_hint: str
     topic: str | None
     evidence: list[str] = field(default_factory=list)
+    # Paper Appendix E.1: the proposal step decides NEW / ENHANCE / NONE.
+    # NONE is represented by returning no CandidateMemory at all.
+    action_hint: str = "NEW"
+    target_id: str | None = None
 
     def __post_init__(self) -> None:
         if self.scope_hint not in SCOPE_HINTS:
             raise ValueError(f"scope_hint must be one of {sorted(SCOPE_HINTS)}, got {self.scope_hint!r}")
+        if self.action_hint not in ACTION_HINTS:
+            raise ValueError(f"action_hint must be one of {sorted(ACTION_HINTS)}, got {self.action_hint!r}")
 
 
 @dataclass
@@ -390,7 +410,7 @@ def skill_from_markdown(text: str) -> Skill:
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `./scripts/run_tests.sh tests/harness/test_schema.py -v`
-Expected: PASS，7 passed
+Expected: PASS，9 passed
 
 - [ ] **Step 5: 提交**
 
@@ -1579,7 +1599,8 @@ git commit -m "feat(harness): per-role call accounting and seed injection via cl
 - Consumes: `CandidateMemory`（Task 1）；`role_scope`（Task 7）
 - Produces:
   - `sanitize_feedback(text: str) -> str` —— 剥离 GT 痕迹
-  - `build_reflect_context(*, topic: str, problem_shape: str, final_answer_given: str, outcome: str, verifier_feedback: str, tool_errors: str, reasoning_excerpt: str, round_count: int) -> dict` —— **纯白名单关键字参数**，题面与 GT 在签名层面不可达
+  - `build_reflect_context(*, topic: str, problem_shape: str, final_answer_given: str, outcome: str, verifier_feedback: str, tool_errors: str, reasoning_excerpt: str, round_count: int, related_skills: list) -> dict` —— **纯白名单关键字参数**，题面与 GT 在签名层面不可达
+    - `related_skills` 对齐论文附录 E.1 的 *"Inputs: ... and related existing skills"*。直接传本题 `store.select()` 已选中的那几条，零额外成本。传 skill 是安全的：每条都已过 `guard.validate_skill()`，不含题面与答案。不给这一项，solver 会反复提炼 harness 里已有的东西，浪费 curator 预算并抬高重复率。
   - `REFLECT_PROMPT: str`
   - `reflect(agent, context: dict, *, feedback_level: str = "standard") -> CandidateMemory | None`
   - `parse_reflection(text: str) -> CandidateMemory | None`
@@ -1587,6 +1608,8 @@ git commit -m "feat(harness): per-role call accounting and seed injection via cl
 **已确认的泄漏通道**：`core/tools/informalmath_verify.py:107` 与 `:176` 会把 `Matches ground truth: {bool}` / `Matches GT: {bool}` 写进返回文本，经 `env.py:106` 包成 `<tool_response>` 回传。`sanitize_feedback` 负责剥掉。
 
 `feedback_level` 支持设计文档 §11 的必做对照：`"minimal"` 只给 0/1 标签 + tool_errors；`"standard"` 给完整 verifier report。
+
+**Prompt 必须逐条落实论文附录 E.1 的 "Filter aggressively"**：跳过 generic advice、basic tool usage、**exact task replay**、以及 would-not-help-unseen-tasks 的候选。其中 "exact task replay" 同时是防泄漏的软闸 —— 它在 prompt 层压制"把本题解法抄进 skill"的倾向。
 
 **本模块不得出现标识符 `ground_truth`。**
 
@@ -1600,6 +1623,7 @@ import inspect
 from alphaapollo.core.harness import reflect as reflect_mod
 from alphaapollo.core.harness.reflect import (build_reflect_context, parse_reflection,
                                               reflect, sanitize_feedback)
+from alphaapollo.core.harness.schema import Skill
 
 
 class StubAgent:
@@ -1611,18 +1635,34 @@ class StubAgent:
         return self.reply
 
 
-GOOD = """SCOPE: topic
+GOOD = """ACTION: NEW
+SCOPE: topic
 TRIGGER: Counting integers under congruence constraints.
 LESSON:
 - Enumerate a small range in python before generalizing.
 AVOID: Extrapolating without numeric verification."""
+
+ENHANCE = """ACTION: ENHANCE
+TARGET: sk_0003
+SCOPE: topic
+TRIGGER: Counting integers under congruence constraints.
+LESSON:
+- Also check the modulus boundary case.
+AVOID: Assuming residues are uniform."""
+
+
+def a_skill(sid="sk_0003"):
+    return Skill(id=sid, name=f"topic-{sid}", level="topic", topic="number_theory",
+                 trigger="Counting integers divisible by a modulus.",
+                 lesson="- Enumerate first.", failure_mode="Skipping verification.")
 
 
 def context(**kw):
     base = dict(topic="number_theory", problem_shape="counting-with-constraints",
                 final_answer_given="412", outcome="failed",
                 verifier_feedback="The modular step is wrong.", tool_errors="",
-                reasoning_excerpt="I assumed the residues were uniform.", round_count=3)
+                reasoning_excerpt="I assumed the residues were uniform.", round_count=3,
+                related_skills=[a_skill()])
     base.update(kw)
     return build_reflect_context(**base)
 
@@ -1636,7 +1676,49 @@ def test_context_builder_takes_no_question_or_answer_key():
     params = set(inspect.signature(build_reflect_context).parameters)
     assert "question" not in params and "ground_truth" not in params
     assert params == {"topic", "problem_shape", "final_answer_given", "outcome",
-                      "verifier_feedback", "tool_errors", "reasoning_excerpt", "round_count"}
+                      "verifier_feedback", "tool_errors", "reasoning_excerpt",
+                      "round_count", "related_skills"}
+
+
+def test_prompt_shows_the_related_existing_skills():
+    """Paper Appendix E.1 lists "related existing skills" as a proposal input;
+    without them the solver keeps re-proposing what the harness already has."""
+    agent = StubAgent(GOOD)
+    reflect(agent, context())
+    assert "sk_0003" in agent.prompts[0]
+    assert "Counting integers divisible by a modulus." in agent.prompts[0]
+
+
+def test_prompt_handles_an_empty_related_skill_list():
+    agent = StubAgent(GOOD)
+    reflect(agent, context(related_skills=[]))
+    assert agent.prompts[0]
+
+
+def test_prompt_carries_the_aggressive_filter_rules():
+    agent = StubAgent(GOOD)
+    reflect(agent, context())
+    prompt = agent.prompts[0]
+    for rule in ("generic advice", "task replay", "unseen"):
+        assert rule in prompt.lower()
+
+
+def test_parse_reflection_reads_the_action_hint():
+    assert parse_reflection(GOOD).action_hint == "NEW"
+
+
+def test_parse_reflection_reads_enhance_with_its_target():
+    cand = parse_reflection(ENHANCE)
+    assert cand.action_hint == "ENHANCE" and cand.target_id == "sk_0003"
+
+
+def test_parse_reflection_returns_none_on_action_none():
+    assert parse_reflection("ACTION: NONE\nnothing reusable here") is None
+
+
+def test_missing_action_line_defaults_to_new():
+    legacy = GOOD.split("\n", 1)[1]
+    assert parse_reflection(legacy).action_hint == "NEW"
 
 
 def test_sanitize_strips_the_matches_gt_channel():
@@ -1718,19 +1800,29 @@ Rounds used: {round_count}
 Your reasoning (excerpt):
 {reasoning_excerpt}
 
+## Related skills already in your harness
+{related_skills}
+
 Write in English. Output EXACTLY this format and nothing else:
 
-SCOPE: general | topic | none
+ACTION: NEW | ENHANCE | NONE
+TARGET: <existing skill id>          (only when ACTION is ENHANCE)
+SCOPE: general | topic
 TRIGGER: <one sentence naming the situation where this applies>
 LESSON:
 - <bullet, imperative, at most 3 bullets, 60 words total>
 AVOID: <one sentence naming the failure mode>
 
-Rules:
-- Be SPECIFIC and ACTIONABLE. Not generic advice like "read carefully".
+Filter aggressively. Output ACTION: NONE rather than proposing:
+- generic advice such as "read carefully" or "double-check the work";
+- basic tool usage that any solver already knows;
+- an exact replay of this task, its statement, or its numeric answer;
+- anything that would not help on a problem you have never seen.
+
+Other rules:
+- If a listed existing skill already covers this lesson, use ACTION: ENHANCE with its id.
 - Describe the METHOD, never the problem statement or its numeric answer.
-- SCOPE: general only if it would help on a different mathematical topic.
-- If nothing reusable can be learned, output SCOPE: none and stop."""
+- SCOPE: general only if it would help on a DIFFERENT mathematical topic."""
 
 
 def sanitize_feedback(text: str) -> str:
@@ -1747,9 +1839,15 @@ def build_reflect_context(
     tool_errors: str,
     reasoning_excerpt: str,
     round_count: int,
+    related_skills: list,
 ) -> dict:
     """Whitelist builder. The problem statement and the reference answer are
-    not parameters of this function, so they cannot reach compilation."""
+    not parameters of this function, so they cannot reach compilation.
+
+    related_skills mirrors Appendix E.1's "related existing skills" input. The
+    skills are safe to pass on: each one already passed guard.validate_skill(),
+    so none of them carries a problem statement or an answer.
+    """
     return {
         "topic": topic,
         "problem_shape": problem_shape,
@@ -1759,7 +1857,14 @@ def build_reflect_context(
         "tool_errors": sanitize_feedback(tool_errors),
         "reasoning_excerpt": reasoning_excerpt,
         "round_count": round_count,
+        "related_skills": list(related_skills),
     }
+
+
+def _render_related(skills: list) -> str:
+    if not skills:
+        return "(none yet)"
+    return "\n".join(f"- {s.id}: {s.trigger} | {s.lesson}" for s in skills)
 
 
 def _feedback_block(context: dict, feedback_level: str) -> str:
@@ -1773,14 +1878,22 @@ def _feedback_block(context: dict, feedback_level: str) -> str:
 
 
 def parse_reflection(text: str) -> CandidateMemory | None:
+    action = re.search(r"^ACTION:\s*(NEW|ENHANCE|NONE)\s*$", text, re.IGNORECASE | re.MULTILINE)
+    if action is not None and action.group(1).upper() == "NONE":
+        return None
+
     scope = re.search(r"^SCOPE:\s*(general|topic|none)\s*$", text, re.IGNORECASE | re.MULTILINE)
     if scope is None or scope.group(1).lower() == "none":
         return None
+
     trigger = re.search(r"^TRIGGER:\s*(.+)$", text, re.MULTILINE)
     lesson = re.search(r"^LESSON:\s*\n(.*?)(?=^AVOID:)", text, re.MULTILINE | re.DOTALL)
     avoid = re.search(r"^AVOID:\s*(.+)$", text, re.MULTILINE)
     if not (trigger and lesson and avoid):
         return None
+
+    hint = action.group(1).upper() if action is not None else "NEW"
+    target = re.search(r"^TARGET:\s*(\S+)\s*$", text, re.MULTILINE)
     return CandidateMemory(
         trigger=trigger.group(1).strip(),
         lesson=lesson.group(1).strip(),
@@ -1788,12 +1901,18 @@ def parse_reflection(text: str) -> CandidateMemory | None:
         scope_hint=scope.group(1).lower(),
         topic=None,
         evidence=[],
+        action_hint=hint,
+        target_id=target.group(1) if (hint == "ENHANCE" and target) else None,
     )
 
 
 def reflect(agent, context: dict, *, feedback_level: str = "standard") -> CandidateMemory | None:
-    prompt = REFLECT_PROMPT.format(feedback_block=_feedback_block(context, feedback_level),
-                                   **context)
+    fields = {k: v for k, v in context.items() if k != "related_skills"}
+    prompt = REFLECT_PROMPT.format(
+        feedback_block=_feedback_block(context, feedback_level),
+        related_skills=_render_related(context["related_skills"]),
+        **fields,
+    )
     with role_scope("reflect"):
         raw = agent.get_action_from_gpt(prompt)
     candidate = parse_reflection(raw)
@@ -1805,7 +1924,7 @@ def reflect(agent, context: dict, *, feedback_level: str = "standard") -> Candid
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `./scripts/run_tests.sh tests/harness/test_reflect.py -v`
-Expected: PASS，10 passed
+Expected: PASS，18 passed
 
 - [ ] **Step 5: 提交**
 
@@ -1949,6 +2068,31 @@ def test_general_curator_requires_a_pattern_across_at_least_two_problems():
     assert "2+" in agent.prompts[0] or "at least 2" in agent.prompts[0]
 
 
+def test_topic_curator_prompt_carries_the_generalizability_test():
+    """Paper Appendix E.2: apply a generalizability test such as usefulness
+    for multiple unseen tasks."""
+    agent = StubAgent("NO_PROPOSALS")
+    TopicCurator().curate(agent, existing=[], candidates=[cand(1)],
+                          topic="number_theory", caps=Caps())
+    assert "unseen" in agent.prompts[0].lower()
+
+
+def test_general_curator_forbids_context_specific_references():
+    """Paper Appendix E.3: general skills must avoid context-specific references."""
+    agent = StubAgent("NO_PATTERNS")
+    GeneralCurator().curate(agent, existing=[], candidates=[cand(1)], caps=Caps())
+    assert "context-specific" in agent.prompts[0].lower()
+
+
+def test_enhance_candidates_surface_their_target_in_the_prompt():
+    agent = StubAgent("NO_PROPOSALS")
+    enhancing = cand(1)
+    enhancing.action_hint, enhancing.target_id = "ENHANCE", "sk_0042"
+    TopicCurator().curate(agent, existing=[skill(42)], candidates=[enhancing],
+                          topic="number_theory", caps=Caps())
+    assert "ENHANCE" in agent.prompts[0] and "sk_0042" in agent.prompts[0]
+
+
 def test_curator_degrades_to_noop_when_the_model_call_raises():
     """设计文档 §5.5：skill 更新失败必须降级为 no-op，不能破坏求解路径。"""
     assert TopicCurator().curate(ExplodingAgent(), existing=[], candidates=[cand(1)],
@@ -2014,9 +2158,14 @@ TOPIC_CURATOR_PROMPT = """You curate topic-specific skills for a competition mat
 {candidates}
 
 Decision criteria:
+- GENERALIZABILITY TEST: keep a candidate only if it would be useful on MULTIPLE
+  problems you have never seen. Judging that it accurately describes what just
+  went wrong is NOT sufficient.
 - Overlaps an existing skill -> MERGE (preferred over ADD).
+- A candidate marked ENHANCE already names a target; prefer MERGE into that target.
 - Budget full ({used}/{cap}) -> only MERGE, REVISE, DELETE or SKIP are allowed.
 - One skill = one specific procedure. Few broad skills beat many narrow ones.
+- Require a clear trigger description; keep content short and actionable.
 - Low confidence -> SKIP.
 
 {fmt}
@@ -2035,6 +2184,10 @@ different topics to distil general skills that help on ANY mathematics problem.
 Your job:
 - Find failure patterns that repeat across DIFFERENT problems and DIFFERENT topics.
 - Each general skill must address a pattern seen in at least 2 (2+) different problems.
+- GENERALIZABILITY TEST: a general skill must be useful on MULTIPLE unseen problems,
+  and must encode procedures for planning, verification, recovery or tool use.
+- General skills MUST avoid context-specific references. Reject any candidate that
+  names a particular problem type, formula, or mathematical object.
 - Do NOT create general skills for topic-specific procedures.
 - Prefer REVISE over ADD when an existing general skill already covers the pattern.
 
@@ -2050,10 +2203,12 @@ def _render_existing(skills: list[Skill]) -> str:
 
 
 def _render_candidates(candidates: list[CandidateMemory]) -> str:
-    return "\n".join(
-        f"{i + 1}. TRIGGER: {c.trigger}\n   LESSON: {c.lesson}\n   AVOID: {c.failure_mode}"
-        for i, c in enumerate(candidates)
-    )
+    lines = []
+    for i, c in enumerate(candidates):
+        hint = c.action_hint + (f" -> {c.target_id}" if c.target_id else "")
+        lines.append(f"{i + 1}. [{hint}] TRIGGER: {c.trigger}\n"
+                     f"   LESSON: {c.lesson}\n   AVOID: {c.failure_mode}")
+    return "\n".join(lines)
 
 
 def _payload(block: str) -> CandidateMemory | None:
@@ -2168,7 +2323,7 @@ class GeneralCurator(_BaseCurator):
 - [ ] **Step 4: 运行测试确认通过**
 
 Run: `./scripts/run_tests.sh tests/harness/test_evolver.py -v`
-Expected: PASS，12 passed
+Expected: PASS，15 passed
 
 - [ ] **Step 5: 提交**
 
@@ -2499,6 +2654,10 @@ class EvoHarnessArm(CrossProblemArm):
                 tool_errors=result["tool_errors"],
                 reasoning_excerpt=result["reasoning_excerpt"],
                 round_count=result["round_count"],
+                # Appendix E.1 feeds the related existing skills back into the
+                # proposal step; reuse what was already selected for this problem
+                # so this costs nothing extra.
+                related_skills=self._last_selection.get(problem["problem_idx"], []),
             )
             try:
                 candidate = reflect(self.agent, context, feedback_level=self.feedback_level)
@@ -3530,7 +3689,7 @@ python -m alphaapollo.core.generation.evolving.evolving_harness_main \
 - [ ] **Step 4: 运行全量回归**
 
 Run: `./scripts/run_tests.sh -v`
-Expected: PASS，全部测试通过（约 110 项）
+Expected: PASS，全部测试通过（130 项）
 
 - [ ] **Step 5: 提交**
 

@@ -7,6 +7,10 @@
 
 **v2 相对 v1 的实质改动**：修正了"evo 路径不依赖 torch"的错误断言（§3.1）；修正了题内 memory 的层级与清空位置（§2）；发现并处置了 `informalmath_verify` 的 GT 泄漏通道（§5.4）；把 wall-clock 从"顺序执行"改为"batch 内并行、batch 间串行"（§3.3、§8）；补上 seed / 重复次数 / 指标定义 / system-message 对齐等实验公平性漏洞（§6）；把 feedback-grounding 从可选扩展提为主论述（§11）。
 
+**v2.1（读完论文附录后补）**：Reflect 的输入补上 `related_skills`，输出补上 `action_hint`/`target_id`（附录 E.1）；Reflect prompt 补上 "Filter aggressively" 四条过滤规则（附录 E.1）；两个 curator 补上 generalizability test 与 general 层的 context-free 约束（附录 E.2/E.3）；案例展示改用附录 B 的五段式与其配对方法（§7.2）。
+
+**论文引用的核实状态**：正文 §1–5 与 Table 1–4、附录 A–F、I 均已逐页读过。附录 F 三条默认值经原文确认 —— *"For harness selection, we use Claude Sonnet 4.5"*、*"we use a batch size of 16"*、*"maximum number of general skills and ... under each task-type topic to 5"*。附录 F 还确认了 skill 的四要素与本设计的 schema 完全同构：*"a **trigger** describing when it should be retrieved, a short actionable **rule or procedure**, optional **evidence** linking it to prior executions, and a **scope**"*。附录 I.2/I.3 确认论文用固定 seed 42、结果 *averaged over three runs*（与 §6.2③ 的 `test_times ≥ 3` 一致）。
+
 ---
 
 ## 1. 目标与范围
@@ -261,17 +265,35 @@ ReflectContext = {
   "tool_errors": str,              # python_code 报错/异常摘要
   "reasoning_excerpt": str,        # 轨迹片段，不含题面
   "round_count": int,
+  "related_skills": list[Skill],   # ← 当前 harness 中与本题相关的 skill（见下）
 }
 ```
 
 ⚠️ **v1 里的 `question_summary: 题面前 200 字` 已删除**。那是"先制造污染再靠 guard 清洗"的反模式。改为只送离线标注器产出的结构化特征（`topic` + `problem_shape`），题面原文完全不进入 Reflect 的 prompt。
 
-输出：`CandidateMemory(lesson, trigger, evidence, scope_hint)`，`scope_hint ∈ {general, topic}` 是建议，最终由 curator 决定落层。
+⚠️ **`related_skills` 是 v2 补入的**。论文**附录 E.1** 明确把 *"related existing skills"* 列为 proposal prompt 的输入之一，参考实现的 `PROPOSE_SKILL_PROMPT` 也有 `{existing_skills_section}`。不给的话 solver 会反复提炼 harness 里已有的东西，白白消耗 curator 预算并抬高重复率。这里直接复用 `store.select()` 的结果（本题已经选中的那几条），零额外成本。传 skill 是安全的：skill 本身已经过 `guard.validate_skill()`，不含题面与答案。
+
+**输出**（对齐附录 E.1 的 *"decide NEW, ENHANCE, or NONE"*）：
+
+```python
+CandidateMemory(trigger, lesson, failure_mode, scope_hint, topic, evidence,
+                action_hint,   # "NEW" | "ENHANCE"，NONE 时整体返回 None
+                target_id)     # ENHANCE 时指向要增强的现有 skill id
+```
+
+`scope_hint` 与 `action_hint` 都只是**建议**，最终落层与落盘由 curator 决定；但 `action_hint="ENHANCE"` + `target_id` 给了 curator 一个强信号去 MERGE/REVISE 而不是 ADD，这正是控制重复增长的机制。
+
+**Reflect prompt 必须包含附录 E.1 的过滤规则**（原文：*"Filter aggressively. Skip generic advice, basic tool usage, exact task replay, and skills that would not help unseen tasks."*）。其中 **"exact task replay"** 这一条同时承担防泄漏职责 —— 它在 prompt 层就压制了"把本题解法抄进 skill"的倾向，是 §5.4 四道闸之外的一道软闸。
 
 ### 5.3 Evolver（双 curator）
 
-**TopicCurator** —— 输入 `(该 topic 现有 skills, 本 batch 该 topic 的候选)`，输出 `ADD / MERGE / REVISE / SKIP`。槽位 5。
+**TopicCurator** —— 输入 `(该 topic 现有 skills, 本 batch 该 topic 的候选, 槽位预算)`，输出 `ADD / MERGE / REVISE / SKIP`。槽位 5。
 **GeneralCurator** —— 输入 `(现有 general skills, 本 batch 全部失败摘要)`，跨 topic 分析失败模式，输出 `ADD / REVISE / DELETE / SKIP`（无模式时 NO_PATTERNS）。要求模式跨 ≥2 题出现（对齐参考实现多数分支）。槽位 5。
+
+两个 curator 的 prompt 必须包含论文**附录 E.2/E.3** 的两条判据：
+
+- **Generalizability test**（E.2 原文：*"apply a generalizability test such as usefulness for multiple unseen tasks"*）—— 每条决策都要问"这条 skill 对多个**未见过**的题有用吗"，而不是"它是否准确描述了刚才那次失败"。这是区分 skill 与流水账的核心判据。
+- **General 层的额外约束**（E.3 原文：*"Create or update a general skill only when a pattern appears across multiple contexts. General skills must avoid context-specific references"*）—— GeneralCurator 必须拒绝任何带特定题型引用的候选。
 
 每 batch 管理调用 = `#failed`（≤8）+ `#distinct_topics`（≤4）+ 1 ≈ 4–13 次。
 
@@ -404,6 +426,20 @@ edits/accept_rate                                     ← Day 4 smoke 的健康�
 ```
 
 Tables/Artifacts：`harness_final`、两个 jsonl、`representative_traces`（正/负迁移各 2–3 条）。
+
+**案例展示格式直接采用论文附录 B 的五段式**（作业要求"至少 2–3 个正迁移或负迁移案例"）：
+
+```
+Task:          问题标识（年份 + 题号，不贴题面）
+Baseline:      无 harness 时的失败表现 + verifier 判据
+Evolved:       有 harness 时的表现变化
+Learned skill: 起作用的那条 skill 的 trigger/lesson 原文
+Core point:    一句话说明 harness 到底学到了什么区分
+```
+
+论文用这个格式展示了 6 个跨 benchmark 的案例（附录 B）。照搬它的好处是 grader 一眼就能看出你读过附录、且案例是按同一标准挑的，而不是事后翻日志硬凑。**负迁移案例用同一格式，只是 `Evolved` 一栏记录变差**——作业明确要求正/负都报。
+
+配对方法（附录 B 原文）：*"we align the same task identifiers between the no-evolve and evolved runs. We only call a case a direct improvement when the baseline run fails and the evolved run succeeds."* 即严格按 problem_idx 对齐 baseline 与 evo 两次运行，只有 baseline 失败且 evo 成功才算正迁移。论文同时诚实声明这**不是单条 skill 的因果消融**（一次注入多条 skill），我们的 README 也要照此声明。`selection_log.jsonl`（§4.4）正好提供了每题注入了哪几条，使这个配对可自动化。
 
 ### 7.3 最终结果表
 
