@@ -20,6 +20,11 @@
 - **许可证头**：`alphaapollo/` 下新增的**源码**文件顶部加 `# Copyright 2026 TMLR Group` + Apache 2.0 声明块，与 `evolving_main.py:1-13` 格式一致。**`tests/` 下的文件与空的 `__init__.py` 不加。** 依据：仓库自身非 verl 的 94 个 `.py` 里仅 29 个（31%）带头，且 `env.py` / `utils/agent.py` / `prompts/informal_math_evolving.py` 等核心文件都没有；给测试文件加头既不符合仓库惯例也无归属意义。
 - **测试不得发起真实网络请求。** 所有涉及 LLM 的 task 用 stub agent。
 - 代码风格跟随仓库现有配置：`ruff`，`line-length = 300`。
+- **计划里给出的测试是下限，不是全集。** 每个 task 的实现者必须在列出的用例之外，**自己设计至少 3 个对抗用例**去攻击自己的实现，并把结果贴进报告 —— 无论通过与否。
+
+  依据（写在这里是为了让后续每个 task 都看到）：Task 0–4 共修了 6 个缺陷，**全部来自本计划给出的参考代码，零个来自实现者的失误**。最典型的是 Task 2 的 `_NUMBER` 正则对句末数字不可见 —— 计划里的实现漏了这个情形，计划里的测试恰好用了 `"...the answer is 738 here."`（数字后跟空格）绕开了它，于是测试必然通过。**实现与测试出自同一来源时，它们共享同一个盲区。** 对抗用例必须由实现者独立设计，目的就是打破这个循环。
+
+  优先攻击方向：正则的边界行为（句末、行首、相邻标点、空输入）、由 LLM 产出因而不可信的字段（`name`、`trigger` 等）、恰好等于阈值的边界值、以及同一逻辑的两个相反方向（该拒的拒了吗 / 该放的放了吗）。
 
 **环境**（已于 2026-09-11 验证可用）：conda 环境 `alphaapollo-dev`（Python 3.12.14, macOS arm64），`pip install -e . --no-deps` + 手工最小依赖集。已验证可 import：`Agent`、`run_problem`、`create_runtime_for_problem`、`load_informal_math_data`、`pandas/openai/omegaconf/fire`、`wandb 0.30.0`、`pytest 9.1.1`、`ruff 0.16.7`。
 
