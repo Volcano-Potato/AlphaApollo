@@ -17,7 +17,7 @@
 - **`reflect.py` / `evolver.py` / `render.py` 中不得出现标识符 `ground_truth`。** 两个例外，README 需如实说明：`guard.py`（负向过滤需要 GT 才能检测答案泄漏，只 reject 不 generate，属信息单向删除）；`arms.py`（仅把 GT 透传给 `store.apply` → `guard.validate_skill`，自身不读取、不拼进任何 prompt）。GT 到达 harness 的路径有且只有这一条，且终点是 reject。
 - **所有 skill 文本必须是英文。** AIME 题面是英文，中文 trigger 会让词面检索恒等于 0。
 - **预算硬编码默认值**：`Caps(general=5, per_topic=5)`；`Budget(b=6, general_max=3, topic_max=4, tokens=800)`；batch size `B=8`。
-- **许可证头**：所有新增 `.py` 文件顶部加 `# Copyright 2026 TMLR Group` + Apache 2.0 声明块，与 `evolving_main.py:1-13` 格式一致。
+- **许可证头**：`alphaapollo/` 下新增的**源码**文件顶部加 `# Copyright 2026 TMLR Group` + Apache 2.0 声明块，与 `evolving_main.py:1-13` 格式一致。**`tests/` 下的文件与空的 `__init__.py` 不加。** 依据：仓库自身非 verl 的 94 个 `.py` 里仅 29 个（31%）带头，且 `env.py` / `utils/agent.py` / `prompts/informal_math_evolving.py` 等核心文件都没有；给测试文件加头既不符合仓库惯例也无归属意义。
 - **测试不得发起真实网络请求。** 所有涉及 LLM 的 task 用 stub agent。
 - 代码风格跟随仓库现有配置：`ruff`，`line-length = 300`。
 
