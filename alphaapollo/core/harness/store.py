@@ -26,11 +26,12 @@ This is the infrastructure half of Task A: a skill lives on disk under ``<root>/
   see ``test_selection_log_is_a_separate_file``, which asserts that logging a selection never
   creates ``harness_log.jsonl`` at all.
 
-This module only implements persistence and logging. Skill *selection* (budget-aware retrieval
-for a given problem) and *edit application* (turning a ``SkillEdit`` into an ADD/MERGE/REVISE/
-DELETE on the store) are later tasks layered on top of ``SkillStore`` -- they are not present
-here even though ``Caps``/``Budget`` (their configuration) are already defined, because later
-tasks depend on the exact field names below.
+This module implements persistence, logging, and edit application (``apply()``, turning a batch
+of curator-issued ``SkillEdit``s into ADD/MERGE/REVISE/DELETE mutations under a hard capacity
+bound -- see ``apply()`` for the two-phase ordering this requires). Skill *selection*
+(budget-aware retrieval for a given problem, using ``Budget``) is a later task layered on top of
+``SkillStore``; it is not present here even though ``Budget`` (its configuration) is already
+defined, because that later task depends on the exact field names below.
 """
 
 from __future__ import annotations
@@ -42,8 +43,9 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from alphaapollo.core.harness.guard import validate_skill
 from alphaapollo.core.harness.render import count_tokens
-from alphaapollo.core.harness.schema import Skill, skill_from_markdown, skill_to_markdown
+from alphaapollo.core.harness.schema import CandidateMemory, Skill, SkillEdit, skill_from_markdown, skill_to_markdown
 
 # ``Skill.name`` is not a trusted, developer-controlled constant: later tasks have a curator
 # (an LLM) mint it, e.g. as a kebab-case slug of the trigger. Two independent problems follow
@@ -61,6 +63,30 @@ from alphaapollo.core.harness.schema import Skill, skill_from_markdown, skill_to
 _NAME_DISALLOWED = re.compile(r"[^a-z0-9-]+")
 _DASH_RUN = re.compile(r"-+")
 _MAX_NAME_PREFIX_LEN = 60
+
+# Used to mint ``Skill.name`` itself (see ``_slugify_trigger``), which is a distinct concern
+# from ``_safe_filename`` above: ``name`` is not just a filename-prefix source, it is also what
+# ``render.py`` puts directly into the policy's system message (``### {skill.name}``). Naming a
+# skill after its own bookkeeping fields (e.g. ``f"{level}-{id}"`` -- an earlier draft of this
+# module did exactly that) would render literal internal ids like "topic-sk_0007" into the
+# model's context as pure noise, and would produce unreadable on-disk filenames when a human
+# later wants to cite a specific skill in the README's case-study section. A short, readable
+# kebab-case slug of the trigger text solves both: it is what the skill is *about*, not how the
+# store happens to have filed it.
+_SLUG_WORD = re.compile(r"[a-z0-9]+")
+_MAX_SLUG_WORDS = 8
+
+
+def _slugify_trigger(trigger: str) -> str:
+    """First few words of ``trigger``, lowercased and hyphenated, e.g. "Counting integers
+    subject to divisibility conditions." -> "counting-integers-subject-to-divisibility-
+    conditions". Falls back to the literal string "skill" if the trigger contains no
+    alphanumeric words at all (e.g. it was pure punctuation) -- this can only ever affect
+    cosmetics (the rendered header, the filename prefix), never correctness: uniqueness on
+    disk is always guaranteed by the id via ``_safe_filename``, never by this slug."""
+    words = _SLUG_WORD.findall(trigger.lower())[:_MAX_SLUG_WORDS]
+    slug = "-".join(words)[:_MAX_NAME_PREFIX_LEN].strip("-")
+    return slug or "skill"
 
 
 @dataclass
@@ -87,17 +113,26 @@ class SkillStore:
         self.harness_log = self.root / "harness_log.jsonl"
         self.selection_log = self.root / "selection_log.jsonl"
         self._skills: dict[str, Skill] = {}
+        self._max_issued_seq = 0
         self.reload()
 
     # ---- persistence -------------------------------------------------
     def reload(self) -> None:
         """Rebuild in-memory state from disk. Used both at construction time and by tests /
         callers that want to confirm a write actually survived a fresh read, independent of
-        whatever this process's in-memory dict currently holds."""
+        whatever this process's in-memory dict currently holds.
+
+        Also re-derives the id high-water-mark used by ``_next_id()`` from whatever is on
+        disk, taking the max against whatever this instance had already issued rather than
+        overwriting it -- see ``_next_id`` for why a plain "max of currently-held ids" is not
+        enough once ``apply()`` can delete a skill and then mint a replacement in the very
+        same batch."""
         self._skills = {}
         for path in sorted(self.skills_dir.glob("*.md")):
             skill = skill_from_markdown(path.read_text(encoding="utf-8"))
             self._skills[skill.id] = skill
+        on_disk_max = max((int(sid.split("_")[1]) for sid in self._skills if sid.startswith("sk_")), default=0)
+        self._max_issued_seq = max(getattr(self, "_max_issued_seq", 0), on_disk_max)
 
     def all(self) -> list[Skill]:
         return list(self._skills.values())
@@ -149,12 +184,19 @@ class SkillStore:
             (self.skills_dir / self._safe_filename(skill)).unlink(missing_ok=True)
 
     def _next_id(self) -> str:
-        """Derived from the ids currently on disk (``self._skills``, populated by ``reload()``)
-        rather than an in-memory counter, so numbering stays monotonic across process restarts:
-        a fresh ``SkillStore`` over the same root must never hand out an id that collides with
-        (and overwrites) a skill file already on disk."""
-        used = [int(sid.split("_")[1]) for sid in self._skills if sid.startswith("sk_")]
-        return f"sk_{(max(used) + 1 if used else 1):04d}"
+        """Monotonic id issuance, seeded from whatever is on disk at ``reload()``/construction
+        time and only ever incremented afterwards -- never recomputed from ``self._skills``
+        alone. That would look sufficient (and was the original design) but breaks the moment
+        a batch deletes a skill and then mints a replacement in the same ``apply()`` call:
+        once the victim is gone from ``self._skills``, "max of currently-held ids" drops back
+        down and reissues the id that was *just freed*, silently aliasing two unrelated skills
+        (different trigger/lesson/evidence, same id) across the harness log's history. Tracking
+        a high-water-mark instead of recomputing it keeps both guarantees: a fresh ``SkillStore``
+        over the same root still never collides with a skill file already on disk (``reload()``
+        maxes the mark against on-disk state), and a same-session delete-then-add never reuses
+        the deleted id either."""
+        self._max_issued_seq += 1
+        return f"sk_{self._max_issued_seq:04d}"
 
     # ---- logging -----------------------------------------------------
     @staticmethod
@@ -168,3 +210,126 @@ class SkillStore:
 
     def log_selection(self, **fields) -> None:
         self._append(self.selection_log, fields)
+
+    # ---- editing -------------------------------------------------------
+    def _occupancy(self, level: str, topic: str | None) -> tuple[int, int]:
+        """Current used-slot count and cap for ``level`` (and, for a topic-level skill,
+        ``topic``). Always computed live from ``self._skills`` -- never cached -- so that a
+        DELETE applied earlier in the same ``apply()`` call is immediately visible to an ADD
+        considered later in that same call (see ``apply()``'s two-phase ordering below)."""
+        if level == "general":
+            used = sum(1 for s in self._skills.values() if s.level == "general")
+            return used, self.caps.general
+        used = sum(1 for s in self._skills.values() if s.level != "general" and s.topic == topic)
+        return used, self.caps.per_topic
+
+    def _materialize(self, payload: CandidateMemory, problem_idx: int) -> Skill:
+        level = payload.scope_hint
+        sid = self._next_id()
+        return Skill(
+            id=sid, name=_slugify_trigger(payload.trigger), level=level,
+            topic=None if level == "general" else payload.topic,
+            trigger=payload.trigger, lesson=payload.lesson,
+            failure_mode=payload.failure_mode, evidence=list(payload.evidence),
+            created_at=problem_idx,
+        )
+
+    def apply(
+        self,
+        edits: list[SkillEdit],
+        *,
+        problem_idx: int,
+        batch: int,
+        question_texts: list[str],
+        ground_truths: list[str],
+    ) -> list[dict]:
+        """Apply a batch of curator-issued edits and return one result dict per edit (same
+        order as ``edits``), while writing exactly one ``harness_log.jsonl`` line per edit
+        (accepted or rejected) as a side effect.
+
+        Two-phase, not one pass in list order: everything that frees or rewrites an existing
+        slot (DELETE / MERGE / REVISE / SKIP) is applied first; ADDs are only checked against
+        occupancy *after* that -- regardless of where they appear in the input list. This is
+        not an optimization, it is required for a curator that emits "DELETE the weak skill,
+        ADD a better one" in the same cycle: without phase separation, a full harness could
+        only ever grow, never turn over, because the ADD would be checked against
+        pre-deletion occupancy.
+        """
+        phase1 = [e for e in edits if e.op in ("DELETE", "MERGE", "REVISE", "SKIP")]
+        phase2 = [e for e in edits if e.op == "ADD"]
+
+        results: list[dict] = []
+        for edit in phase1 + phase2:
+            try:
+                record = self._apply_one(edit, problem_idx, question_texts, ground_truths)
+            except Exception as exc:
+                # A single malformed/unexpected edit must never abort the whole batch --
+                # doing so would risk breaking the underlying baseline run this harness is
+                # layered on top of. Log it as a rejection and keep processing the rest.
+                record = {"skill_id": edit.skill_id, "accepted": False,
+                          "reject_reason": f"internal_error:{type(exc).__name__}", "guard_note": None}
+            record.update(problem_idx=problem_idx, batch=batch, op=edit.op,
+                          actor=edit.actor, reason=edit.reason)
+            self.log_event(**record)
+            results.append(record)
+        return results
+
+    def _apply_one(self, edit: SkillEdit, problem_idx: int, question_texts: list[str], ground_truths: list[str]) -> dict:
+        if edit.op == "SKIP":
+            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": "skipped",
+                    "guard_note": None}
+
+        if edit.op == "DELETE":
+            existed = edit.skill_id in self._skills
+            self._delete_skill(edit.skill_id)
+            return {"skill_id": edit.skill_id, "accepted": existed,
+                    "reject_reason": None if existed else "unknown_skill_id",
+                    "guard_note": None}
+
+        if edit.payload is None:
+            return {"skill_id": edit.skill_id, "accepted": False,
+                    "reject_reason": "missing_payload", "guard_note": None}
+
+        ok, note = validate_skill(edit.payload, question_texts=question_texts,
+                                  ground_truths=ground_truths)
+        if not ok:
+            return {"skill_id": edit.skill_id, "accepted": False, "reject_reason": note,
+                    "guard_note": None}
+        # `note` may instead be an advisory tag on an *accepted* candidate (currently only
+        # "numeric_coincidence"): keep it and log it, it is not a rejection -- its count is
+        # what quantifies how many skills a bare GT-equality rule would have thrown away.
+        guard_note = note
+
+        if edit.op in ("REVISE", "MERGE"):
+            target = self._skills.get(edit.skill_id)
+            if target is None:
+                return {"skill_id": edit.skill_id, "accepted": False,
+                        "reject_reason": "unknown_skill_id", "guard_note": None}
+            target.trigger = edit.payload.trigger
+            target.lesson = edit.payload.lesson
+            target.failure_mode = edit.payload.failure_mode
+            target.evidence = sorted(set(target.evidence) | set(edit.payload.evidence))
+            target.revised_at = sorted(set(target.revised_at) | {problem_idx})
+            self._write_skill(target)
+            return {"skill_id": target.id, "accepted": True, "reject_reason": None,
+                    "guard_note": guard_note}
+
+        # ADD. `CandidateMemory.__post_init__` only validates that scope_hint is one of
+        # {"general", "topic"}; it does NOT enforce the scope_hint=="topic" => topic-is-set
+        # invariant that `Skill`/`_write_skill._validate_level_topic` assumes. Left unchecked,
+        # a topic-scoped candidate with a missing topic would reach `_write_skill` and raise
+        # ValueError there instead of failing this ADD cleanly -- caught above by the
+        # try/except in `apply()`, but a dedicated reject_reason is far more useful for the
+        # experiment log than a generic internal_error.
+        level = edit.payload.scope_hint
+        if level == "topic" and not edit.payload.topic:
+            return {"skill_id": None, "accepted": False, "reject_reason": "missing_topic",
+                    "guard_note": guard_note}
+        used, cap = self._occupancy(level, edit.payload.topic)
+        if used >= cap:
+            return {"skill_id": None, "accepted": False, "reject_reason": "capacity_full",
+                    "guard_note": guard_note}
+        skill = self._materialize(edit.payload, problem_idx)
+        self._write_skill(skill)
+        return {"skill_id": skill.id, "accepted": True, "reject_reason": None,
+                "guard_note": guard_note}
