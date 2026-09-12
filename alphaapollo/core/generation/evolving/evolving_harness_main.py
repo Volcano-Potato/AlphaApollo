@@ -52,7 +52,7 @@ from typing import Any, Callable
 
 from alphaapollo.core.harness.accounting import role_scope
 from alphaapollo.core.harness.loader import batches
-from alphaapollo.core.harness.reflect import sanitize_feedback
+from alphaapollo.core.harness.reflect import _GT_CHANNEL, sanitize_feedback
 
 logger = logging.getLogger(__name__)
 
@@ -161,11 +161,77 @@ def _policy_rounds(step_outputs: list[dict]) -> dict[int, list[dict]]:
 def _last_verifier_text(step_outputs: list[dict]) -> str:
     """The most recent ``role == "verifier"`` entry's own action text (its `<report>...</report>`
     reply) -- never a policy entry's. Returns `""` if the verifier path was never entered (e.g.
-    `verifier_configs.get("enabled")` was false for this run)."""
+    `verifier_configs.get("enabled")` was false for this run).
+
+    This is the FALLBACK path for ``verifier_feedback``, used only when no
+    ``role == "verifier_aggregation"`` entry exists (see ``_last_verifier_aggregation_report``,
+    which is tried first). A real ``role == "verifier"`` entry's ``policy_actions`` is the
+    verifier LLM's *own* raw reply stream -- its `<think>` reasoning, any `<python_code>` block it
+    ran to double-check the policy's arithmetic, AND its concluding `<report>...</report>` verdict
+    all concatenated together (see a real recorded example in
+    ``tests/harness/fixtures/real_problem_payload.json``'s ``role == "verifier"`` entry) -- not a
+    clean verdict string. It is kept as a fallback rather than removed because a run with
+    ``verifier_env.enable`` on but no aggregation step configured still needs *something* for
+    ``verifier_feedback``, and this is the only verifier-authored text available in that shape."""
     verifier_entries = [e for e in step_outputs if e.get("role") == "verifier"]
     if not verifier_entries:
         return ""
     return _as_text(verifier_entries[-1].get("policy_actions"))
+
+
+def _last_verifier_aggregation_report(step_outputs: list[dict]) -> str | None:
+    """The most recent ``role == "verifier_aggregation"`` entry's ``representative_report`` --
+    the PREFERRED source for ``verifier_feedback`` (task-14 Finding 1).
+
+    ``role == "verifier_aggregation"`` is a third row shape this module did not previously know
+    about: it is emitted once per round, after every individual ``role == "verifier"`` pass for
+    that round has run, and carries the majority-vote outcome (``majority_judgment``,
+    ``judgment_counts``) plus ``representative_report`` -- the single verifier reply that produced
+    the majority judgment, already isolated from that verifier's own `<think>`/`<python_code>`
+    scratch work (see ``final_verifier_actions`` for the raw stream this was extracted from, which
+    this module never reads). This is exactly the clean natural-language verdict text Reflect
+    needs (e.g. "The policy agent's solution appears correct. ... All calculations are verified
+    and consistent." -- see the fixture above), where ``_last_verifier_text``'s raw
+    ``role == "verifier"`` path instead hands back that verifier's entire `<think>` + tool-call +
+    `<report>` stream.
+
+    Returns ``None`` -- never ``""`` -- both when no ``verifier_aggregation`` entry exists at all
+    and when the most recent one's ``representative_report`` is itself empty/missing, so
+    ``extract_result`` can treat both cases identically: fall back to ``_last_verifier_text``."""
+    agg_entries = [e for e in step_outputs if e.get("role") == "verifier_aggregation"]
+    if not agg_entries:
+        return None
+    return agg_entries[-1].get("representative_report") or None
+
+
+def _sanitize_reasoning_excerpt(text: str) -> str:
+    """Scrub the GT-matching-line leak channel from a policy reasoning excerpt WITHOUT stripping
+    ``<think>...</think>`` blocks (task-14 Finding 2) -- the one respect in which this deliberately
+    does NOT behave like ``reflect.sanitize_feedback``.
+
+    ``reflect.sanitize_feedback`` (via its private ``_strip_reasoning`` helper) strips think blocks
+    because it feeds text that gets *parsed* for structured fields (Reflect's ``ACTION:``/`SCOPE:``
+    lines, the curator's ``ADD:``/``MERGE:``/etc.) -- an unstripped think block sitting before the
+    real formatted answer would win first-match-by-position over the real answer, and that
+    stripping behavior is correct there and is NOT touched by this module (see ``reflect.py`` /
+    ``evolver.py``, both untouched here).
+
+    ``reasoning_excerpt`` is different: it is *captured*, never parsed. AlphaApollo's own policy
+    prompt (``core/environments/prompts/informal_math_evolving.py``) forces every solving attempt
+    into ``<think>...</think>`` -- "This process MUST be enclosed within `<think> </think>` tags"
+    -- so the think block IS the model's actual reasoning, not scratch noise around it. A real
+    recorded rollout's think block ran to 2241 characters of genuine step-by-step derivation
+    (``tests/harness/fixtures/real_problem_payload.json``); running that text through
+    ``sanitize_feedback`` collapses it to just the trailing ``<answer>...</answer>`` tag, leaving
+    Reflect nothing to distill a lesson from on a failed problem. This function keeps the think
+    content and only removes the GT-channel line (``core/tools/informalmath_verify.py``'s
+    ``Matches ground truth: .../Matches GT: ...`` text, which a reasoning trace can narrate/quote
+    even when it did not come from a `<think>` block itself) -- reusing ``reflect.py``'s own
+    ``_GT_CHANNEL`` regex (imported, not duplicated) as the single source of truth for what that
+    line looks like, the same private-import pattern ``arms.py``/``evolver.py`` already use for
+    ``reflect._strip_reasoning``."""
+    text = text or ""
+    return "\n".join(line for line in text.split("\n") if not _GT_CHANNEL.match(line))
 
 
 def _tool_error_text(tool_events: list) -> str:
@@ -221,19 +287,43 @@ def extract_result(problem_payload: dict) -> dict:
       degrades safely instead of silently overcounting if that ever stops being true.
     - ``final_answer_given`` / ``reasoning_excerpt`` / ``tool_errors`` all describe the *last*
       round specifically, since that is the attempt a failure-triggered Reflect call would
-      actually be reflecting on; ``verifier_feedback`` is the most recent verifier reply in the
-      whole payload (normally that same last round's own verifier pass).
+      actually be reflecting on; ``verifier_feedback`` prefers the most recent
+      ``role == "verifier_aggregation"`` entry's ``representative_report`` (a clean verdict
+      string), falling back to the most recent raw ``role == "verifier"`` entry's own reply only
+      when no aggregation entry is present (see ``_last_verifier_aggregation_report`` /
+      ``_last_verifier_text``) -- normally that same last round's own verifier pass either way.
 
     Every action text this payload carries -- policy or verifier -- is checked for the
     ground-truth tool-call leak (``assert_no_gt_tool_call``) before anything else happens; a hit
     raises ``LeakageError``, which is not caught here and must propagate to the caller.
-    ``verifier_feedback``, ``tool_errors``, and ``reasoning_excerpt`` are all passed through
-    ``sanitize_feedback()`` -- every one of them can end up in a Reflect prompt (``arms.py``'s
-    ``EvoHarnessArm.end_batch``), and a reasoning trace can itself narrate/quote the tool's
-    GT-matching line even when the verifier report proper does not (see ``reflect.py``'s module
-    docstring). This function never reads ``ground_truth`` / ``gt_traj`` / ``data_source`` /
-    ``observation`` / ``next_observation`` / ``infos`` / ``policy_memory`` / ``verifier_memory``
-    from ``problem_payload`` or any ``step_outputs`` entry -- see the whitelist note above.
+    ``verifier_feedback`` and ``tool_errors`` are passed through ``sanitize_feedback()`` (which
+    strips ``<think>`` blocks -- correct there, since a verifier's report text is a candidate
+    Reflect-prompt fragment, not the substantive content itself); ``reasoning_excerpt`` instead
+    goes through ``_sanitize_reasoning_excerpt()``, which scrubs the same GT-channel line WITHOUT
+    stripping ``<think>`` blocks, because for the *policy's own* reasoning the think block -- the
+    genuine, required-by-prompt step-by-step derivation -- is the one piece of substantive content
+    a failure-triggered Reflect call needs (see that function's docstring for the full rationale;
+    task-14 Finding 2). A reasoning trace can itself narrate/quote the tool's GT-matching line even
+    when the verifier report proper does not (see ``reflect.py``'s module docstring), which is why
+    the GT-channel scrub still applies to ``reasoning_excerpt`` even though the think-stripping
+    half of ``sanitize_feedback`` does not. This function never reads ``ground_truth`` /
+    ``gt_traj`` / ``data_source`` / ``observation`` / ``next_observation`` / ``infos`` /
+    ``policy_memory`` / ``verifier_memory`` from ``problem_payload`` or any ``step_outputs`` entry
+    -- see the whitelist note above.
+
+    Note on Finding 3 (not a defect): on a problem the policy solved correctly, both
+    ``final_answer_given`` and ``reasoning_excerpt`` will legitimately contain the same string as
+    ``ground_truth`` -- the model's own correct answer necessarily equals the correct answer. This
+    is NOT the leakage this module guards against (that is ``assert_no_gt_tool_call`` /
+    ``sanitize_feedback``'s GT-channel scrub, both about the verification *tool*'s echoed
+    ground-truth text, not the model's own arrived-at answer). It is also harmless in practice:
+    Reflect (``arms.py``) only ever calls this compilation path on a FAILED problem, at which point
+    the model's own answer is, by definition, different from ``ground_truth``. Do not
+    ``!= ground_truth``-scrub ``final_answer_given`` / ``reasoning_excerpt`` to "fix" this
+    coincidence -- see ``tests/harness/test_driver.py``'s
+    ``test_extract_result_never_leaks_the_ground_truth_sentinel``, which already proves the real
+    leak channels are closed using a sentinel that could never legitimately appear in a model's own
+    answer, and must keep passing unmodified.
 
     An empty (or missing) ``step_outputs``, or one with no ``role == "policy"`` entries at all,
     returns an all-zero structure -- this is a normal, expected shape (e.g. a problem that
@@ -261,13 +351,22 @@ def extract_result(problem_payload: dict) -> dict:
     for step_entry in final_round_steps:
         final_round_tool_events.extend(step_entry.get("tool_events") or [])
 
+    # Prefer the clean role=="verifier_aggregation" verdict (representative_report); only fall
+    # back to the raw role=="verifier" reply stream when no aggregation entry is present. See
+    # _last_verifier_aggregation_report / _last_verifier_text docstrings (task-14 Finding 1).
+    verifier_feedback_text = _last_verifier_aggregation_report(step_outputs)
+    if verifier_feedback_text is None:
+        verifier_feedback_text = _last_verifier_text(step_outputs)
+
     return {
         "pass1_round0": int(bool(round0_entry.get("policy_answer_correct"))),
         "pass_final": int(bool(final_entry.get("policy_answer_correct"))),
         "final_answer_given": _truncate(sanitize_feedback(str(final_answer_given))),
-        "verifier_feedback": _truncate(sanitize_feedback(_last_verifier_text(step_outputs))),
+        "verifier_feedback": _truncate(sanitize_feedback(verifier_feedback_text)),
         "tool_errors": _truncate(sanitize_feedback(_tool_error_text(final_round_tool_events))),
-        "reasoning_excerpt": _truncate(sanitize_feedback(final_actions_text)),
+        # NOT sanitize_feedback() -- that strips <think> blocks, which here would strip the
+        # policy's actual reasoning (task-14 Finding 2). See _sanitize_reasoning_excerpt.
+        "reasoning_excerpt": _truncate(_sanitize_reasoning_excerpt(final_actions_text)),
         "round_count": len(round_indices),
     }
 

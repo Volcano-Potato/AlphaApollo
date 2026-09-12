@@ -18,8 +18,42 @@
 # Do not treat `SIMPLIFIED_PAYLOAD` as documentation of the real schema -- it only exists to keep
 # the round0-vs-final / GT-sanitization assertions readable. `REALISTIC_PAYLOAD` is the one that
 # actually exercises the whitelist.
+#
+# --- task-14 addendum: the first fixture from a REAL execution ------------------------------
+#
+# Neither `SIMPLIFIED_PAYLOAD` nor `REALISTIC_PAYLOAD` above was ever run against a real model --
+# both are hand-written against what the schema was *believed* to look like. That is exactly how
+# three bugs slipped past every test in this file until a real qwen3-8b/AIME24 rollout was
+# recorded and diffed against `extract_result`'s output:
+#
+#   1. `role` has a THIRD value neither fixture included: `"verifier_aggregation"`, emitted once
+#      per round with a clean `representative_report` verdict string. `verifier_feedback` must
+#      prefer it over the raw `role == "verifier"` reply stream, falling back to the latter only
+#      when no aggregation entry is present.
+#   2. `reasoning_excerpt` was being run through `sanitize_feedback()`, which strips `<think>`
+#      blocks -- but AlphaApollo's own policy prompt forces the model's entire solving process
+#      into `<think>...</think>` (see `core/environments/prompts/informal_math_evolving.py`), so
+#      that stripped every real reasoning trace down to a bare `<answer>...</answer>` tag. Fixed
+#      by `_sanitize_reasoning_excerpt()`, which scrubs only the GT-channel line.
+#   3. On a problem the policy solved correctly, `final_answer_given` / `reasoning_excerpt`
+#      legitimately contain the same string as `ground_truth` (the model's own correct answer
+#      equals the correct answer) -- not leakage, since Reflect only ever runs on failures, where
+#      the model's answer is by definition different from `ground_truth`. See
+#      `test_real_fixture_answer_matching_ground_truth_is_not_leakage` below.
+#
+# `REAL_PROBLEM_PAYLOAD` (loaded from `fixtures/real_problem_payload.json`) is a trimmed recording
+# of qwen3-8b actually solving AIME24 problem 0 end to end, `evolving_round=1` (one round only,
+# and it succeeded first try, so `pass1_round0 == pass_final == 1` here -- this fixture does not
+# exercise the multi-round-disagreement path, which `REALISTIC_PAYLOAD` above already covers with
+# synthetic data). It keeps only the keys `extract_result` actually reads off each `step_outputs`
+# entry (plus `role`/`step`/`evolving_round` on every entry), and drops the run's `full_config` /
+# `env_config` blocks entirely (configuration noise, unrelated to this module). `ground_truth` /
+# `gt_traj` are deliberately still present at the payload's top level -- their presence is exactly
+# what makes `test_real_fixture_answer_matching_ground_truth_is_not_leakage` meaningful.
 
+import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -27,6 +61,8 @@ from alphaapollo.core.generation.evolving.evolving_harness_main import LeakageEr
 from alphaapollo.core.harness.accounting import CallAccountant
 from alphaapollo.core.harness.arms import BaselineArm, CrossProblemArm
 from alphaapollo.core.harness.tracker import HarnessTracker
+
+REAL_PROBLEM_PAYLOAD = json.loads((Path(__file__).parent / "fixtures" / "real_problem_payload.json").read_text())
 
 SENTINEL = "SENTINEL_GT_9999"
 
@@ -421,3 +457,122 @@ def test_extract_result_tool_errors_excludes_the_verify_tools_stdout():
     assert "Matches GT" not in result["tool_errors"]
     assert "informalmath_verify" not in result["tool_errors"]
     assert result["tool_errors"].strip() == "NameError: name 'x' is not defined"
+
+
+# --- task-14 fixes: verifier_aggregation, <think>-preserving reasoning_excerpt, real fixture ----
+#
+# See the addendum near the top of this file for the three findings a real recorded rollout
+# exposed. The tests below cover each one directly, plus the first fixture built from a real
+# execution rather than hand-written data.
+
+
+def test_verifier_feedback_prefers_the_aggregation_role_representative_report():
+    """Finding 1: when a `role == "verifier_aggregation"` entry is present, `verifier_feedback`
+    must come from its `representative_report` -- a clean verdict string -- not from the raw
+    `role == "verifier"` entry's own `<think>`/`<python_code>`/`<report>` reply stream, even
+    though the latter is textually present in the same payload and comes later in `step_outputs`
+    order among non-aggregation entries."""
+    payload = {
+        "step_outputs": [
+            {"role": "policy", "evolving_round": 0, "step": 0, "policy_actions": ["<answer>7</answer>"], "policy_answer": "7", "policy_answer_correct": 1, "tool_events": []},
+            {"role": "verifier", "evolving_round": 0, "step": 0, "policy_actions": ["<think>scratch work, python code, etc.</think>\n```python\nprint(1)\n```\n<report>messy raw reply</report>"]},
+            {
+                "role": "verifier_aggregation",
+                "evolving_round": 0,
+                "step": 4,
+                "majority_judgment": 1,
+                "representative_report": "Clean verdict: the solution is correct.",
+                "final_verifier_actions": ["<think>this must never leak into verifier_feedback</think><report>Clean verdict: the solution is correct.</report>"],
+            },
+        ]
+    }
+    result = extract_result(payload)
+    assert result["verifier_feedback"] == "Clean verdict: the solution is correct."
+    assert "scratch work" not in result["verifier_feedback"]
+    assert "python" not in result["verifier_feedback"]
+    assert "must never leak" not in result["verifier_feedback"]
+
+
+def test_verifier_feedback_falls_back_to_the_raw_verifier_role_when_no_aggregation_entry_exists():
+    """Finding 1's other half: a payload with only `role == "verifier"` entries (no
+    `"verifier_aggregation"` at all -- the shape both `SIMPLIFIED_PAYLOAD` and `REALISTIC_PAYLOAD`
+    already use) must keep using the pre-existing `_last_verifier_text` path. This is the
+    behavior every pre-task-14 test above already exercises implicitly; this test names it
+    explicitly so the fallback is not accidentally lost in a future refactor."""
+    result = extract_result(SIMPLIFIED_PAYLOAD)
+    # `_last_verifier_text` returns the verifier's raw action text as-is (tags included) -- only
+    # the GT-channel line is scrubbed by `sanitize_feedback`; this is the pre-existing fallback
+    # behavior, unchanged by task-14.
+    assert "Looks right." in result["verifier_feedback"]
+    assert "Matches GT" not in result["verifier_feedback"]
+
+
+def test_reasoning_excerpt_keeps_the_think_block_but_still_scrubs_the_gt_channel_line():
+    """Finding 2: `reasoning_excerpt` must NOT be run through `sanitize_feedback()` (which strips
+    `<think>...</think>`, discarding the policy's actual derivation -- AlphaApollo's own prompt
+    forces the model's whole reasoning process into that tag). It must still scrub a GT-channel
+    line if one appears in the text, even inside the think block itself."""
+    payload = {
+        "step_outputs": [
+            {
+                "role": "policy",
+                "evolving_round": 0,
+                "step": 0,
+                "policy_actions": ["<think>Step 1: set up equations.\nMatches ground truth: True\nStep 2: solve for s.</think>\n<answer>42</answer>"],
+                "policy_answer": "42",
+                "policy_answer_correct": 1,
+                "tool_events": [],
+            }
+        ]
+    }
+    result = extract_result(payload)
+    assert "<think>" in result["reasoning_excerpt"]
+    assert "Step 1: set up equations." in result["reasoning_excerpt"]
+    assert "Step 2: solve for s." in result["reasoning_excerpt"]
+    assert "Matches ground truth" not in result["reasoning_excerpt"]
+
+
+def test_real_fixture_extracts_every_field_correctly():
+    """The first fixture built from an actual qwen3-8b/AIME24 execution (see the addendum near the
+    top of this file), not hand-written data. Exercises the `verifier_aggregation`-preferred path
+    (Finding 1) and the think-preserving `reasoning_excerpt` (Finding 2) simultaneously, against
+    real model output rather than a synthetic stand-in for it."""
+    result = extract_result(REAL_PROBLEM_PAYLOAD)
+    assert result["pass1_round0"] == 1  # the model got it right on round 0
+    assert result["pass_final"] == 1  # only one round ran, so pass_final agrees
+    assert result["round_count"] == 1
+    assert result["final_answer_given"] == "204"
+    # verifier_feedback must come from the clean verifier_aggregation.representative_report, not
+    # the raw role=="verifier" entry's <think>+python_code+<report> stream.
+    assert result["verifier_feedback"].startswith("The policy agent's solution appears correct.")
+    assert "<think>" not in result["verifier_feedback"]
+    assert "```python" not in result["verifier_feedback"]
+    # reasoning_excerpt must be the policy's real <think> derivation, not collapsed to the bare
+    # trailing <answer> tag (the pre-fix bug: sanitize_feedback() stripped the whole think block).
+    assert result["reasoning_excerpt"].startswith("<think>")
+    assert "quadratic formula" in result["reasoning_excerpt"]
+    assert len(result["reasoning_excerpt"]) > 500  # the pre-fix bug left ~35 chars here
+
+
+def test_real_fixture_answer_matching_ground_truth_is_not_leakage():
+    """Finding 3 (not a defect, but worth guarding against a future misreading): on this real
+    payload the policy solved the problem correctly, so `final_answer_given` legitimately equals
+    `ground_truth` ("204") -- the model's own correct answer necessarily equals the correct
+    answer. This is NOT the leakage channel `test_extract_result_never_leaks_the_ground_truth_
+    sentinel` (above, against `REALISTIC_PAYLOAD`) guards against -- that test uses a sentinel
+    string that could never legitimately be a model's own answer, specifically so it stays
+    meaningful. Reflect is only ever invoked on FAILED problems (see `arms.py`), at which point
+    the model's answer is by definition different from `ground_truth`, so this coincidence never
+    actually reaches a Reflect prompt in practice. Do not "fix" this by scrubbing
+    `final_answer_given`/`reasoning_excerpt` against `ground_truth` -- doing so would break the
+    sentinel test's premise that a real leak channel, not an answer coincidence, is what is being
+    detected."""
+    assert REAL_PROBLEM_PAYLOAD["ground_truth"] == "204"
+    result = extract_result(REAL_PROBLEM_PAYLOAD)
+    assert result["final_answer_given"] == "204"
+    # The raw policy reasoning also legitimately contains "204" (the model's own derivation, not
+    # a leak) -- checked against the fixture's raw text rather than `reasoning_excerpt` itself,
+    # since `_MAX_FIELD_CHARS` truncation happens to clip this particular 2000+-character trace
+    # before its concluding "\boxed{204}" line.
+    raw_final_round_text = "\n".join(REAL_PROBLEM_PAYLOAD["step_outputs"][0]["policy_actions"])
+    assert "204" in raw_final_round_text
