@@ -62,6 +62,18 @@ from alphaapollo.core.harness.schema import ACTION_HINTS, SCOPE_HINTS, Candidate
 # always emitted as its own independent line, never interleaved with other content mid-line.
 _GT_CHANNEL = re.compile(r"^.*(matches ground truth|matches gt)\s*:.*$", re.IGNORECASE | re.MULTILINE)
 
+# `accounting.install_accounting` (preserving upstream `utils/agent.py` behavior) prepends a
+# reasoning model's raw `reasoning_content`/`reasoning` field to every reply, wrapped in exactly
+# this tag, whenever the served model is a reasoning model. `_THINK_BLOCK` removes a
+# well-formed `<think>...</think>` pair; the body is non-greedy so consecutive blocks
+# ("<think>A</think>text<think>B</think>") are each matched and removed individually rather than
+# one match spanning both and swallowing the text between them. `_THINK_UNCLOSED` is a second,
+# separate pass for the case no `</think>` ever appears: everything from that tag to the end of
+# the string is dropped, on the theory that a formatted answer was never actually produced yet,
+# so guessing where "real" content might resume would be worse than discarding it.
+_THINK_BLOCK = re.compile(r"<think>.*?</think>", re.IGNORECASE | re.DOTALL)
+_THINK_UNCLOSED = re.compile(r"<think>.*\Z", re.IGNORECASE | re.DOTALL)
+
 REFLECT_PROMPT = """You just failed a competition mathematics problem. Distill ONE reusable \
 lesson that would help you on FUTURE, DIFFERENT problems.
 
@@ -90,8 +102,8 @@ AVOID: <one sentence naming the failure mode>
 Filter aggressively. Output ACTION: NONE rather than proposing:
 - generic advice such as "read carefully" or "double-check the work";
 - basic tool usage that any solver already knows;
-- an exact replay of this task, its statement, or its numeric answer (an exact task replay);
-- anything that would not help on a problem you have never seen (an unseen problem).
+- an exact replay of this task, its statement, or its numeric answer;
+- anything that would not help on a problem you have never seen.
 
 Other rules:
 - If a listed existing skill already covers this lesson, use ACTION: ENHANCE with its id.
@@ -114,9 +126,29 @@ _LESSON_RE = re.compile(r"^[ \t]*LESSON[ \t]*:[ \t]*(.*)$", re.IGNORECASE | re.M
 _AVOID_RE = re.compile(r"^[ \t]*AVOID[ \t]*:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE)
 
 
+def _strip_reasoning(text: str) -> str:
+    """Remove every ``<think>...</think>`` reasoning block from ``text`` (see the ``_THINK_BLOCK``
+    / ``_THINK_UNCLOSED`` comment above for why this exists and how the two passes divide the
+    work). Applied before any field parsing, and before the GT-channel line scrub, since a
+    reasoning model's think-aloud text can itself contain either an answer-matching line (if it
+    is quoting/paraphrasing a tool response while thinking) or field-label-shaped text (if it is
+    rehearsing candidate answers, e.g. "...should this be ACTION: NONE? No..."). Every regex
+    downstream of this function uses ``re.search``/``re.match``, which return the *first* match
+    by position -- an unstripped think block sitting before the real formatted answer would
+    silently win that first match instead of raising anything, which is exactly the failure mode
+    this function exists to prevent."""
+    text = _THINK_BLOCK.sub("", text)
+    text = _THINK_UNCLOSED.sub("", text)
+    return text
+
+
 def sanitize_feedback(text: str) -> str:
-    """Strip AlphaApollo's answer-matching channel (see module docstring) from ``text``,
-    deleting each offending line in full rather than editing around it."""
+    """Strip AlphaApollo's answer-matching channel (see module docstring) from ``text``, after
+    first removing any ``<think>...</think>`` reasoning block -- the verifier's report text
+    flows through the same ``Agent.get_action_from_gpt`` path as everything else in this module,
+    so it can carry the same reasoning-model wrapper. Offending lines are deleted in full rather
+    than edited around."""
+    text = _strip_reasoning(text)
     return "\n".join(line for line in text.split("\n") if not _GT_CHANNEL.match(line))
 
 
@@ -223,8 +255,15 @@ def parse_reflection(text: str) -> CandidateMemory | None:
     ``ACTION: NONE`` and ``SCOPE: none`` are both accepted as "nothing to propose" (models do not
     always follow the ACTION: NONE convention exactly), and both short-circuit to ``None`` before
     any of the four required fields are even checked.
+
+    A ``<think>...</think>`` reasoning block, if present, is stripped before any of the field
+    regexes run (see ``_strip_reasoning``) -- otherwise a reasoning model's think-aloud text,
+    which comes *before* the formatted answer and routinely rehearses field-label-shaped text
+    while reasoning out loud, would win every ``re.search``'s first-match-by-position semantics
+    instead of the real, later answer.
     """
-    if not text or not text.strip():
+    text = _strip_reasoning(text or "")
+    if not text.strip():
         return None
 
     action_match = _ACTION_RE.search(text)

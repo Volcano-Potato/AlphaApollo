@@ -1,7 +1,7 @@
 import inspect
 
 from alphaapollo.core.harness import reflect as reflect_mod
-from alphaapollo.core.harness.reflect import build_reflect_context, parse_reflection, reflect, sanitize_feedback
+from alphaapollo.core.harness.reflect import _strip_reasoning, build_reflect_context, parse_reflection, reflect, sanitize_feedback
 from alphaapollo.core.harness.schema import Skill
 
 
@@ -67,10 +67,14 @@ def test_prompt_handles_an_empty_related_skill_list():
 
 
 def test_prompt_carries_the_aggressive_filter_rules():
+    """Each substring corresponds to one of paper Appendix E.1's four "filter aggressively"
+    categories: generic advice, basic tool usage, exact task replay, and anything that would
+    not generalize to an unseen problem. Checked as substrings that actually occur in
+    REFLECT_PROMPT verbatim, not phrases invented independently of the prompt text."""
     agent = StubAgent(GOOD)
     reflect(agent, context())
     prompt = agent.prompts[0]
-    for rule in ("generic advice", "task replay", "unseen"):
+    for rule in ("generic advice", "basic tool usage", "exact replay", "never seen"):
         assert rule in prompt.lower()
 
 
@@ -248,3 +252,116 @@ def test_sanitize_feedback_case_variants_leading_space_and_duplicate_in_one_line
     assert "matches ground truth" not in cleaned.lower()
     assert "matches gt" not in cleaned.lower()
     assert "Genuinely useful feedback line." in cleaned
+
+
+def test_missing_action_line_defaults_to_new_when_action_value_is_unrecognized():
+    """An ACTION: line that names something other than NEW/ENHANCE/NONE (a reasoning model
+    drifting off the requested vocabulary, e.g. "MAYBE") is treated the same as a malformed
+    reply -- None, not a silent coercion to NEW or ENHANCE. Pinned explicitly so a future
+    change cannot casually start accepting arbitrary ACTION values."""
+    text = """ACTION: MAYBE
+SCOPE: topic
+TRIGGER: Counting integers under congruence constraints.
+LESSON:
+- Enumerate a small range in python before generalizing.
+AVOID: Extrapolating without numeric verification."""
+    assert parse_reflection(text) is None
+
+
+# ---------------------------------------------------------------------------
+# Coordinator fix-round 1/5, Finding 1: a <think>...</think> reasoning-model
+# prefix (accounting.install_accounting preserves upstream's practice of
+# prepending this to every reply) must never be allowed to hijack parsing via
+# re.search's first-match-by-position semantics.
+# ---------------------------------------------------------------------------
+
+
+def _wrap_think(reasoning: str, reply: str) -> str:
+    return f"<think>\n{reasoning}\n</think>\n{reply}"
+
+
+def test_strip_reasoning_removes_a_single_closed_think_block():
+    assert _strip_reasoning("<think>blah blah</think>REST") == "REST"
+
+
+def test_strip_reasoning_removes_multiple_think_blocks():
+    text = "<think>one</think>middle<think>two</think>tail"
+    assert _strip_reasoning(text) == "middletail"
+
+
+def test_strip_reasoning_is_case_insensitive():
+    assert _strip_reasoning("<THINK>blah</THINK>REST") == "REST"
+    assert _strip_reasoning("<Think>blah</think>REST") == "REST"
+
+
+def test_strip_reasoning_drops_everything_after_an_unclosed_think_tag():
+    text = "<think>never closes and just keeps going ACTION: NEW"
+    assert _strip_reasoning(text) == ""
+
+
+def test_strip_reasoning_is_a_noop_with_no_think_tags():
+    plain = "plain text, no think tags at all"
+    assert _strip_reasoning(plain) == plain
+
+
+def test_think_prefix_with_no_interfering_keywords_still_parses():
+    """The case the coordinator's manual test labeled "clean think prefix" -- must keep
+    working after the fix, not just the decoy cases below."""
+    cand = parse_reflection(_wrap_think("Let me work through this problem carefully.", GOOD))
+    assert cand is not None
+    assert cand.action_hint == "NEW"
+    assert cand.scope_hint == "topic"
+
+
+def test_think_block_containing_a_decoy_scope_line_does_not_hijack_scope():
+    """Before the fix: the think block's "SCOPE: general" line (line-anchored, exactly like the
+    real answer's own SCOPE line) was the first match by position and silently won, filing what
+    should be a topic-level candidate as general-level with no error anywhere. After the fix:
+    the think block is gone before SCOPE is searched for at all, so the real "SCOPE: topic" line
+    in the formatted answer is the only match."""
+    reasoning = "Drafting my answer.\nSCOPE: general\nActually, rethinking this below."
+    cand = parse_reflection(_wrap_think(reasoning, GOOD))
+    assert cand is not None
+    assert cand.scope_hint == "topic"
+
+
+def test_think_block_containing_action_none_does_not_discard_the_real_candidate():
+    """Before the fix: the think block's own "ACTION: NONE" line (line-anchored, exactly like the
+    real answer's own ACTION line) was the first match by position, so the real candidate was
+    silently dropped (reflect() would just look like "no candidate this round" with nothing in
+    the log to explain why)."""
+    reasoning = "Let me think about this.\nACTION: NONE\nWait, actually there is a good lesson here."
+    cand = parse_reflection(_wrap_think(reasoning, GOOD))
+    assert cand is not None
+    assert cand.action_hint == "NEW"
+
+
+def test_think_block_containing_action_none_maybe_does_not_discard_the_real_candidate():
+    reasoning = "ACTION: NONE maybe? Let me reconsider before deciding."
+    cand = parse_reflection(_wrap_think(reasoning, GOOD))
+    assert cand is not None
+    assert cand.action_hint == "NEW"
+
+
+def test_reflect_end_to_end_strips_a_think_prefixed_reply():
+    """Integration-level check that reflect() (not just parse_reflection() in isolation) sees
+    the benefit: the StubAgent's reply carries a decoy-laden think prefix exactly like a real
+    served reasoning model would produce via accounting.install_accounting."""
+    reasoning = "Considering options.\nACTION: NONE\nSCOPE: general\nActually, finalizing the real answer below."
+    agent = StubAgent(_wrap_think(reasoning, GOOD))
+    cand = reflect(agent, context())
+    assert cand is not None
+    assert cand.action_hint == "NEW"
+    assert cand.scope_hint == "topic"
+    assert cand.topic == "number_theory"
+
+
+def test_sanitize_feedback_strips_a_think_block_before_scrubbing_the_gt_channel():
+    """The verifier's report text flows through the same Agent.get_action_from_gpt path as
+    everything else, so it can carry the same <think> wrapper -- and that wrapper could itself
+    contain (a paraphrase of) the answer-matching line."""
+    raw = "<think>\nMatches ground truth: True\n</think>\nResult looks internally consistent."
+    cleaned = sanitize_feedback(raw)
+    assert "<think>" not in cleaned.lower()
+    assert "Matches ground truth" not in cleaned
+    assert "Result looks internally consistent." in cleaned
