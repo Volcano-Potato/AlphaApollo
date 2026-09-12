@@ -2,8 +2,30 @@ import threading
 
 import pytest
 
+import alphaapollo.core.generation.evolving.utils.agent as agent_module
 from alphaapollo.core.generation.evolving.utils.agent import Agent
 from alphaapollo.core.harness.accounting import CallAccountant, install_accounting, role_scope
+
+
+class FakeOpenAIClient:
+    """Stand-in for `openai.OpenAI` used only so `Agent.__init__` has something to call.
+
+    `Agent.__init__` (utils/agent.py:27) unconditionally constructs a real `openai.OpenAI(...)`,
+    which eagerly builds an httpx transport and resolves this machine's proxy environment
+    variables (HTTP_PROXY/ALL_PROXY/...) at construction time -- on a machine with
+    `ALL_PROXY=socks5://...` set and the optional `socksio` extra not installed, that raises
+    `ImportError` before a single test assertion runs, and does so regardless of anything this
+    test file does afterward. Monkeypatching the `OpenAI` name inside the `agent` module (rather
+    than reaching for `Agent.__new__` and hand-setting attributes) keeps every test routed
+    through the real `Agent.__init__` -- so its config-reading logic (api_key resolution from
+    `vllm_config`/`OPENAI_API_KEY`, model_name/temperature/max_tokens/system_prompt defaults) is
+    still exercised -- while never touching a socket, a proxy setting, or any other piece of the
+    network stack. The instance's `.chat.completions` is immediately replaced by the `agent`
+    fixture below with `FakeCompletions`; this class only needs to survive construction.
+    """
+
+    def __init__(self, **kwargs):
+        self.init_kwargs = kwargs
 
 
 class FakeUsage:
@@ -30,6 +52,8 @@ class FakeCompletions:
 
 @pytest.fixture
 def agent(monkeypatch):
+    monkeypatch.setattr(agent_module, "OpenAI", FakeOpenAIClient)
+
     a = Agent({"model_name": "m", "base_url": "http://x/v1", "api_key": "EMPTY"})
     completions = FakeCompletions()
     a.client = type("C", (), {"chat": type("Ch", (), {"completions": completions})()})()
