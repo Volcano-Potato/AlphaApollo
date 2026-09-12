@@ -126,20 +126,17 @@ for i, batch in enumerate(batches(problems, size=B)):      # batch 间严格串�
 
 磁盘上是 markdown（人可读，便于放进 README 做 case study），内存中是 dataclass。
 
-```python
-@dataclass
-class Skill:
-    id: str; name: str           # sk_0007 / kebab-case
-    level: str                   # "general" | "topic"
-    topic: str | None
-    trigger: str                 # 适用条件；同时是 selection 检索键
-    lesson: str                  # 操作知识，bullet points，≤60 词
-    failure_mode: str            # 要避免的失败模式，≤40 词
-    evidence: list[str]          # 仅 problem_id + 失败类别，绝无题面/答案
-    created_at: int; revised_at: list[int]
-    n_selected: int; n_selected_success: int
-    n_tokens: int
-```
+一条 skill 由三段正文加一组元数据构成。三段正文对应数学解题的「识别题型 → 选择方法 → 规避陷阱」：
+
+| 段 | 承载什么 | 为什么这样切 |
+| --- | --- | --- |
+| **trigger** | 什么情况下适用 | **同时是 selection 的检索键** —— 检索匹配的是"适用条件"而非"方法本身"，因为题目描述的是情况，不是方法 |
+| **lesson** | 具体怎么做，祈使句 bullet | 限 60 词。长了会挤占注入预算，也更容易滑向复述某道题的解法 |
+| **failure_mode** | 要避免什么 | 与 lesson 分开存，因为"别做什么"常比"做什么"更可迁移 |
+
+元数据分三类：**身份**（id / name / level / topic）、**来源**（evidence 只存 problem_id 与失败类别标签，绝不存题面或答案；created_at / revised_at 记录演化轨迹）、**效用统计**（n_selected 与 n_selected_success 驱动 §4.3 的排序；n_tokens 缓存供预算计算）。
+
+`level` 与 `topic` 是互相绑定的：general 层不隶属任何 topic，topic 层必须指定一个。这条不变量在存储的写入路径上强制校验，而非依赖调用方自觉。
 
 **⚠️ 全部 skill 必须用英文。** AIME 题面是英文，§4.3 的词面检索若拿中文 trigger 去匹配英文题面，重合恒为 0，selection 会静默退化成 utility-only（早期全是 Laplace 先验 0.5 ≈ 随机）。Reflect/curator 的 prompt 里写死 `Write in English`，`guard.py` 加非 ASCII 比例检查。
 
@@ -255,19 +252,18 @@ Do not extrapolate a small-range pattern to the problem's full range without num
 
 **输入构造 = 防泄漏第一道闸**。用**白名单**取字段，不是黑名单删字段：
 
-```python
-ReflectContext = {
-  "topic": str,                    # 离线标注的 topic 标签
-  "problem_shape": str,            # 离线标注的题型标签（如 "counting-with-constraints"）
-  "final_answer_given": str,       # 自己给的答案，不是 GT
-  "outcome": Literal["failed"],    # 只有 0/1 标签
-  "verifier_feedback": str,        # 已剥离 GT 痕迹，见 §5.4
-  "tool_errors": str,              # python_code 报错/异常摘要
-  "reasoning_excerpt": str,        # 轨迹片段，不含题面
-  "round_count": int,
-  "related_skills": list[Skill],   # ← 当前 harness 中与本题相关的 skill（见下）
-}
-```
+Reflect 能看到的东西是一份**封闭白名单**，由一个专门的构造函数把关：
+
+| 送进去的 | 为什么安全 |
+| --- | --- |
+| topic、problem_shape | 离线标注器产出的结构化标签，不是题面原文 |
+| 自己给出的答案 | 是模型自己的产物；Reflect 只在失败时触发，所以它必然 ≠ 标准答案 |
+| 成功/失败标签 | 作业明确允许使用 |
+| verifier 反馈、工具报错 | 已剥离 GT 痕迹（见 §5.4） |
+| 轨迹片段、用了几轮 | 模型自己的执行记录 |
+| 相关的现有 skill | 每条都已通过 guard 校验，不含题面与答案 |
+
+**关键在于不在这份名单上的东西**：题面原文与标准答案**不是这个构造函数的参数**，所以它们在类型层面就到不了 Reflect —— 是"传不进来"，不是"记得别传"。
 
 ⚠️ **v1 里的 `question_summary: 题面前 200 字` 已删除**。那是"先制造污染再靠 guard 清洗"的反模式。改为只送离线标注器产出的结构化特征（`topic` + `problem_shape`），题面原文完全不进入 Reflect 的 prompt。
 
@@ -275,11 +271,7 @@ ReflectContext = {
 
 **输出**（对齐附录 E.1 的 *"decide NEW, ENHANCE, or NONE"*）：
 
-```python
-CandidateMemory(trigger, lesson, failure_mode, scope_hint, topic, evidence,
-                action_hint,   # "NEW" | "ENHANCE"，NONE 时整体返回 None
-                target_id)     # ENHANCE 时指向要增强的现有 skill id
-```
+候选经验沿用 skill 的三段结构，另带两组建议：**落在哪一层**（general 还是 topic），以及**是新增还是增强既有的哪一条**。论文附录 E.1 的三选一里，「NONE」不体现为字段值 —— 没有可提炼的东西时，整个候选就不产生。
 
 `scope_hint` 与 `action_hint` 都只是**建议**，最终落层与落盘由 curator 决定；但 `action_hint="ENHANCE"` + `target_id` 给了 curator 一个强信号去 MERGE/REVISE 而不是 ADD，这正是控制重复增长的机制。
 
@@ -327,13 +319,15 @@ CandidateMemory(trigger, lesson, failure_mode, scope_hint, topic, evidence,
 
 ### 6.1 统一接口
 
-```python
-class CrossProblemArm(Protocol):
-    def begin_batch(self, batch_idx) -> str:              # -> 本 batch 的注入文本
-    def record_selection(self, problem_idx, ...) -> None
-    def observe(self, problem_idx, result) -> None
-    def end_batch(self, batch_idx) -> list[dict]          # 更新，返回变更记录
-```
+三个 arm 实现同一个接口，接口本身就编码了在线学习协议的时序：
+
+1. **批次开始** —— 冻结本批要用的跨题知识，本批内不再变化
+2. **取本题的注入文本** —— 三个 arm 都必须返回**非空**字符串（见 §6.2①）
+3. **记录选择** —— 本题用了哪些 skill，落进 selection 日志
+4. **观察结果** —— 攒证据，但此刻**不更新**任何东西
+5. **批次结束** —— 才允许更新，返回变更记录
+
+第 4 步与第 5 步分离是协议的核心：一道题的产出只能进入下一批，永远回不到它自己。三个 arm 的差别仅在第 2 步注入什么、第 5 步做什么，时序完全相同。
 
 | Arm | 注入 | 更新 | 管理调用/batch |
 | --- | --- | --- | --- |

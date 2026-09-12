@@ -1601,112 +1601,32 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'alphaapollo.core.ha
 
 `alphaapollo/core/harness/accounting.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-from __future__ import annotations
-
-import contextlib
-import contextvars
-import functools
-import logging
-from collections import defaultdict
-from typing import Callable
-
-from alphaapollo.core.generation.evolving.utils.agent import Agent
-
-log = logging.getLogger(__name__)
-
 SOLVER_ROLES = ("solver", "summarizer", "aggregator")
+
 MGMT_ROLES = ("reflect", "topic_curator", "general_curator", "offline_labeling")
 
 _current_role: contextvars.ContextVar[str] = contextvars.ContextVar("harness_role", default="unscoped")
-
-
-@contextlib.contextmanager
-def role_scope(role: str):
-    token = _current_role.set(role)
-    try:
-        yield
-    finally:
-        _current_role.reset(token)
-
-
-class CallAccountant:
-    def __init__(self) -> None:
-        self.calls: dict[str, int] = defaultdict(int)
-        self.tokens_in: dict[str, int] = defaultdict(int)
-        self.tokens_out: dict[str, int] = defaultdict(int)
-
-    def record(self, role: str, prompt_tokens: int, completion_tokens: int) -> None:
-        self.calls[role] += 1
-        self.tokens_in[role] += prompt_tokens
-        self.tokens_out[role] += completion_tokens
-
-    def snapshot(self) -> dict[str, int]:
-        out: dict[str, int] = {}
-        for role, n in self.calls.items():
-            out[f"calls/{role}"] = n
-            out[f"tokens/{role}_in"] = self.tokens_in[role]
-            out[f"tokens/{role}_out"] = self.tokens_out[role]
-        out["calls/solver_side_total"] = sum(self.calls[r] for r in SOLVER_ROLES)
-        out["calls/mgmt_side_total"] = sum(self.calls[r] for r in MGMT_ROLES)
-        out["tokens/solver_side_in"] = sum(self.tokens_in[r] for r in SOLVER_ROLES)
-        out["tokens/mgmt_side_in"] = sum(self.tokens_in[r] for r in MGMT_ROLES)
-        return out
-
-
-def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -> Callable[[], None]:
-    """Patch Agent.get_action_from_gpt to record usage and inject a seed.
-
-    Wrapping Agent *instances* is not enough: evolving_main.py:607 and :180
-    construct their own Agent objects inside functions, so only a class-level
-    patch covers every call site without editing upstream files.
-    """
-    original = Agent.get_action_from_gpt
-    seed_supported = {"value": seed is not None}
-
-    @functools.wraps(original)
-    def patched(self, obs):
-        messages = []
-        if self.system_prompt:
-            messages.append({"role": "system", "content": self.system_prompt})
-        messages.append({"role": "user", "content": obs})
-
-        kwargs = dict(model=self.model_name, messages=messages,
-                      temperature=self.temperature, max_tokens=self.max_tokens,
-                      n=1, stop=None)
-        if seed_supported["value"]:
-            kwargs["seed"] = seed
-
-        try:
-            response = self.client.chat.completions.create(**kwargs)
-        except Exception as exc:  # noqa: BLE001
-            # Not every OpenAI-compatible provider accepts `seed`. Degrade once,
-            # loudly, rather than failing every call for the rest of the run.
-            if not (seed_supported["value"] and "seed" in str(exc).lower()):
-                raise
-            log.warning("provider rejected `seed`; continuing without it. "
-                        "Reproducibility is reduced — record this in the README.")
-            seed_supported["value"] = False
-            kwargs.pop("seed", None)
-            response = self.client.chat.completions.create(**kwargs)
-
-        usage = getattr(response, "usage", None)
-        accountant.record(_current_role.get(),
-                          getattr(usage, "prompt_tokens", 0) or 0,
-                          getattr(usage, "completion_tokens", 0) or 0)
-
-        message = response.choices[0].message
-        reasoning = getattr(message, "reasoning_content", None) or getattr(message, "reasoning", None)
-        prefix = f"<think>\n{reasoning.strip()}\n</think>\n" if isinstance(reasoning, str) and reasoning.strip() else ""
-        return prefix + message.content.strip()
-
-    Agent.get_action_from_gpt = patched
-
-    def uninstall() -> None:
-        Agent.get_action_from_gpt = original
-
-    return uninstall
 ```
+
+### 实现思路
+
+`role_scope(role)` 是一个 contextmanager，把当前角色写进一个 `contextvars.ContextVar`（默认 `"unscoped"`），退出时还原。用 contextvar 而非全局变量，是因为 batch 内会有并行执行，每个线程需要自己的角色标签。
+
+`CallAccountant` 维护三个以角色为键的计数器：调用次数、输入 token、输出 token。它的 `snapshot()` 除了逐角色展开，还要额外算出 `calls/solver_side_total` 与 `calls/mgmt_side_total` 两个汇总 —— 作业要求 solver 调用与跨题经验管理调用**分开报告**，这两个汇总就是那份报告的直接来源。
+
+`install_accounting()` 是核心，它 monkey-patch `Agent.get_action_from_gpt` 这个**类方法**并返回一个卸载函数。要点：
+
+1. **必须 patch 类方法，不能包装实例。** 上游 `evolving_main.py:607` 的 summarizer 和 `:180` 的 aggregator 都是在函数内部用 config dict 现场 `Agent(...)` 构造的，外层拿不到那些对象。只有类级 patch 能覆盖全部调用点，同时保持"对上游文件零改动"。
+
+2. **补回原方法丢掉的信息。** 上游实现只 `return reasoning_text + action`，把 `response.usage` 扔了。patch 后的版本要自己构造请求、读取 `usage.prompt_tokens` / `usage.completion_tokens` 记账，然后**原样复现**原方法的返回值语义 —— 包括把 `reasoning_content` 或 `reasoning` 字段包成 `<think>...</think>` 前缀这个细节，漏了会改变下游解析行为。
+
+3. **seed 注入要能优雅降级。** 并非所有 OpenAI 兼容服务商都接受 `seed`。首次因 seed 被拒时，记一条 warning、关掉 seed、重试一次；此后不再带 seed。**不要每次调用都重试** —— 用一个可变标志记住状态。失败原因若与 seed 无关，必须原样抛出，不要吞掉真实错误。
+
+4. `functools.wraps` 保留原方法元信息；卸载函数把类属性还原成原始的那个函数对象。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -1908,16 +1828,10 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'alphaapollo.core.ha
 
 `alphaapollo/core/harness/reflect.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-from __future__ import annotations
-
-import re
-
-from alphaapollo.core.harness.accounting import role_scope
-from alphaapollo.core.harness.schema import CandidateMemory
-
-# core/tools/informalmath_verify.py:107 and :176 emit these lines into the
-# tool response; they must never reach the compilation stage.
 _GT_CHANNEL = re.compile(r"^.*(matches ground truth|matches gt)\s*:.*$",
                          re.IGNORECASE | re.MULTILINE)
 
@@ -1956,103 +1870,26 @@ Other rules:
 - If a listed existing skill already covers this lesson, use ACTION: ENHANCE with its id.
 - Describe the METHOD, never the problem statement or its numeric answer.
 - SCOPE: general only if it would help on a DIFFERENT mathematical topic."""
-
-
-def sanitize_feedback(text: str) -> str:
-    return _GT_CHANNEL.sub("", text or "").strip()
-
-
-def build_reflect_context(
-    *,
-    topic: str,
-    problem_shape: str,
-    final_answer_given: str,
-    outcome: str,
-    verifier_feedback: str,
-    tool_errors: str,
-    reasoning_excerpt: str,
-    round_count: int,
-    related_skills: list,
-) -> dict:
-    """Whitelist builder. The problem statement and the reference answer are
-    not parameters of this function, so they cannot reach compilation.
-
-    related_skills mirrors Appendix E.1's "related existing skills" input. The
-    skills are safe to pass on: each one already passed guard.validate_skill(),
-    so none of them carries a problem statement or an answer.
-    """
-    return {
-        "topic": topic,
-        "problem_shape": problem_shape,
-        "final_answer_given": final_answer_given,
-        "outcome": outcome,
-        "verifier_feedback": sanitize_feedback(verifier_feedback),
-        "tool_errors": sanitize_feedback(tool_errors),
-        "reasoning_excerpt": reasoning_excerpt,
-        "round_count": round_count,
-        "related_skills": list(related_skills),
-    }
-
-
-def _render_related(skills: list) -> str:
-    if not skills:
-        return "(none yet)"
-    return "\n".join(f"- {s.id}: {s.trigger} | {s.lesson}" for s in skills)
-
-
-def _feedback_block(context: dict, feedback_level: str) -> str:
-    errors = context["tool_errors"]
-    if feedback_level == "minimal":
-        return f"Tool errors: {errors}\n" if errors else ""
-    parts = [f"Verifier feedback: {context['verifier_feedback']}"]
-    if errors:
-        parts.append(f"Tool errors: {errors}")
-    return "\n".join(parts) + "\n"
-
-
-def parse_reflection(text: str) -> CandidateMemory | None:
-    action = re.search(r"^ACTION:\s*(NEW|ENHANCE|NONE)\s*$", text, re.IGNORECASE | re.MULTILINE)
-    if action is not None and action.group(1).upper() == "NONE":
-        return None
-
-    scope = re.search(r"^SCOPE:\s*(general|topic|none)\s*$", text, re.IGNORECASE | re.MULTILINE)
-    if scope is None or scope.group(1).lower() == "none":
-        return None
-
-    trigger = re.search(r"^TRIGGER:\s*(.+)$", text, re.MULTILINE)
-    lesson = re.search(r"^LESSON:\s*\n(.*?)(?=^AVOID:)", text, re.MULTILINE | re.DOTALL)
-    avoid = re.search(r"^AVOID:\s*(.+)$", text, re.MULTILINE)
-    if not (trigger and lesson and avoid):
-        return None
-
-    hint = action.group(1).upper() if action is not None else "NEW"
-    target = re.search(r"^TARGET:\s*(\S+)\s*$", text, re.MULTILINE)
-    return CandidateMemory(
-        trigger=trigger.group(1).strip(),
-        lesson=lesson.group(1).strip(),
-        failure_mode=avoid.group(1).strip(),
-        scope_hint=scope.group(1).lower(),
-        topic=None,
-        evidence=[],
-        action_hint=hint,
-        target_id=target.group(1) if (hint == "ENHANCE" and target) else None,
-    )
-
-
-def reflect(agent, context: dict, *, feedback_level: str = "standard") -> CandidateMemory | None:
-    fields = {k: v for k, v in context.items() if k != "related_skills"}
-    prompt = REFLECT_PROMPT.format(
-        feedback_block=_feedback_block(context, feedback_level),
-        related_skills=_render_related(context["related_skills"]),
-        **fields,
-    )
-    with role_scope("reflect"):
-        raw = agent.get_action_from_gpt(prompt)
-    candidate = parse_reflection(raw)
-    if candidate is not None and candidate.scope_hint == "topic":
-        candidate.topic = context["topic"]
-    return candidate
 ```
+
+### 实现思路
+
+`sanitize_feedback()` 用上面的 `_GT_CHANNEL` 正则按行剥除 GT 痕迹后返回。注意是**整行删除**，因为 `informalmath_verify` 是把它作为独立一行输出的。
+
+`build_reflect_context()` 是防泄漏的第一道闸，写法上有一条硬要求：**用关键字参数逐项列出白名单，不要接受 `**kwargs` 或一个字典**。题面与标准答案不出现在参数列表里，它们在类型层面就到不了 Reflect —— 这是"传不进来"而非"记得别传"。函数内部对 `verifier_feedback` 与 `tool_errors` 调用 `sanitize_feedback()`。
+
+`_render_related()` 把已选中的 skill 渲染成简短列表供 prompt 引用；空列表要返回一个占位串（如 `(none yet)`），不能返回空字符串，否则 prompt 里会出现悬空的小节标题。
+
+`_feedback_block()` 按 `feedback_level` 分流：`"minimal"` 只给工具报错，`"standard"` 额外给 verifier 完整报告。这个开关服务于设计文档 §11 的必做对照实验（论文 Table 4 显示 LLM 自评反馈可能让 harness 越进化越差，而 AlphaApollo 的 verifier 正是 LLM）。
+
+`parse_reflection()` 解析模型输出，这是**历史缺陷最密集的地方**，请格外小心：
+- `ACTION: NONE` 直接返回 `None`；`SCOPE: none` 也要兼容（模型不一定严格遵守格式）
+- 四个字段（TRIGGER / LESSON / AVOID / SCOPE）缺任何一个都返回 `None`，不要半解析出一个残缺对象
+- `TARGET` 只在 `ACTION: ENHANCE` 时有意义
+- 缺少 `ACTION:` 行时默认按 `NEW` 处理
+- **注意行首锚定与多行匹配的边界**：LESSON 是多行的，它的结束边界是下一个 `AVOID:` 行
+
+`reflect()` 组装 prompt、在 `role_scope("reflect")` 内调用 agent、解析结果。若 `scope_hint` 是 `topic`，把上下文里的 topic 回填进候选。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -2243,18 +2080,10 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'alphaapollo.core.ha
 
 `alphaapollo/core/harness/evolver.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-from __future__ import annotations
-
-import logging
-import re
-
-from alphaapollo.core.harness.accounting import role_scope
-from alphaapollo.core.harness.schema import CandidateMemory, Skill, SkillEdit
-from alphaapollo.core.harness.store import Caps
-
-log = logging.getLogger(__name__)
-
 _COMMON_FORMAT = """For each decision output ONE block. Use EXACTLY these forms:
 
 ADD: <candidate number>
@@ -2328,130 +2157,25 @@ Your job:
 
 If no cross-topic pattern is present, output: NO_PATTERNS"""
 
-
-def _render_existing(skills: list[Skill]) -> str:
-    if not skills:
-        return "(none)"
-    return "\n".join(f"- {s.id}: {s.trigger} | {s.lesson}" for s in skills)
-
-
-def _render_candidates(candidates: list[CandidateMemory]) -> str:
-    lines = []
-    for i, c in enumerate(candidates):
-        hint = c.action_hint + (f" -> {c.target_id}" if c.target_id else "")
-        lines.append(f"{i + 1}. [{hint}] TRIGGER: {c.trigger}\n"
-                     f"   LESSON: {c.lesson}\n   AVOID: {c.failure_mode}")
-    return "\n".join(lines)
-
-
-def _payload(block: str) -> CandidateMemory | None:
-    trigger = re.search(r"^TRIGGER:\s*(.+)$", block, re.MULTILINE)
-    lesson = re.search(r"^LESSON:\s*\n(.*?)(?=^AVOID:)", block, re.MULTILINE | re.DOTALL)
-    avoid = re.search(r"^AVOID:\s*(.+)$", block, re.MULTILINE)
-    if not (trigger and lesson and avoid):
-        return None
-    return CandidateMemory(trigger=trigger.group(1).strip(), lesson=lesson.group(1).strip(),
-                           failure_mode=avoid.group(1).strip(), scope_hint="topic",
-                           topic=None, evidence=[])
-
-
 _HEAD = re.compile(r"^(ADD|MERGE|REVISE|DELETE|SKIP):\s*(\S+)(?:\s+INTO\s+(\S+))?\s*$",
                    re.MULTILINE)
-
-
-def parse_curator_output(text: str, actor: str) -> list[SkillEdit]:
-    heads = list(_HEAD.finditer(text or ""))
-    edits: list[SkillEdit] = []
-    for i, head in enumerate(heads):
-        op, first, target = head.group(1), head.group(2), head.group(3)
-        block = text[head.end():heads[i + 1].start() if i + 1 < len(heads) else len(text)]
-        reason_match = re.search(r"^REASON:\s*(.+)$", block, re.MULTILINE)
-        reason = reason_match.group(1).strip() if reason_match else ""
-
-        edit = SkillEdit(op=op, actor=actor, reason=reason)
-        if op in ("ADD", "SKIP"):
-            edit.skill_id = None
-            edit._candidate_index = int(first) - 1 if first.isdigit() else None  # type: ignore[attr-defined]
-        elif op == "MERGE":
-            edit.skill_id = target
-            edit._candidate_index = int(first) - 1 if first.isdigit() else None  # type: ignore[attr-defined]
-            edit.payload = _payload(block)
-        elif op == "REVISE":
-            edit.skill_id = first
-            edit._candidate_index = None  # type: ignore[attr-defined]
-            edit.payload = _payload(block)
-        else:  # DELETE
-            edit.skill_id = first
-            edit._candidate_index = None  # type: ignore[attr-defined]
-        edits.append(edit)
-    return edits
-
-
-def _bind_payloads(edits: list[SkillEdit], candidates: list[CandidateMemory],
-                   *, force_general: bool, topic: str | None) -> list[SkillEdit]:
-    bound: list[SkillEdit] = []
-    for edit in edits:
-        idx = getattr(edit, "_candidate_index", None)
-        if edit.op == "ADD":
-            if idx is None or not 0 <= idx < len(candidates):
-                continue
-            edit.payload = CandidateMemory(**vars(candidates[idx]))
-        if edit.payload is not None:
-            edit.payload.scope_hint = "general" if force_general else "topic"
-            edit.payload.topic = None if force_general else topic
-        bound.append(edit)
-    return bound
-
-
-class _BaseCurator:
-    actor = "curator"
-
-    def _call(self, agent, prompt: str) -> str:
-        with role_scope(self.actor):
-            return agent.get_action_from_gpt(prompt)
-
-
-class TopicCurator(_BaseCurator):
-    actor = "topic_curator"
-
-    def curate(self, agent, *, existing: list[Skill], candidates: list[CandidateMemory],
-               topic: str, caps: Caps) -> list[SkillEdit]:
-        if not candidates:
-            return []
-        prompt = TOPIC_CURATOR_PROMPT.format(
-            topic=topic, used=len(existing), cap=caps.per_topic,
-            existing=_render_existing(existing), candidates=_render_candidates(candidates),
-            fmt=_COMMON_FORMAT,
-        )
-        try:
-            raw = self._call(agent, prompt)
-        except Exception as exc:  # noqa: BLE001 - harness failures must never break solving
-            log.warning("topic curator call failed, degrading to no-op: %s", exc)
-            return []
-        return _bind_payloads(parse_curator_output(raw, self.actor), candidates,
-                              force_general=False, topic=topic)
-
-
-class GeneralCurator(_BaseCurator):
-    actor = "general_curator"
-
-    def curate(self, agent, *, existing: list[Skill], candidates: list[CandidateMemory],
-               caps: Caps) -> list[SkillEdit]:
-        if not candidates:
-            return []
-        prompt = GENERAL_CURATOR_PROMPT.format(
-            used=len(existing), cap=caps.general, n=len(candidates),
-            existing=_render_existing(existing), candidates=_render_candidates(candidates),
-            fmt=_COMMON_FORMAT,
-        )
-        try:
-            raw = self._call(agent, prompt)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("general curator call failed, degrading to no-op: %s", exc)
-            return []
-        return _bind_payloads(parse_curator_output(raw, self.actor), candidates,
-                              force_general=True, topic=None)
 ```
+
+### 实现思路
+
+`_render_existing()` / `_render_candidates()` 把现有 skill 与候选渲染进 prompt。候选的渲染要带上它自己的 `action_hint` 与 `target_id`（形如 `[ENHANCE -> sk_0042]`）—— 这是 Reflect 阶段给 curator 的信号，丢了就退化成纯新增。
+
+`parse_curator_output()` 用 `_HEAD` 逐个定位指令头，**以「下一个指令头的位置」作为当前指令块的结束边界**，然后在块内找 `REASON:` 与（对 MERGE/REVISE 而言）新内容三段。这里有几个易错点：
+- `ADD` / `SKIP` 的操作数是**候选编号**（1-based），`REVISE` / `DELETE` 的是**已有 skill 的 id**，`MERGE` 两者都有（`MERGE: <编号> INTO <id>`）
+- 编号要转成 0-based 索引再去取候选，且必须校验越界
+- 解析不出任何指令头时返回空列表（对应 `NO_PROPOSALS` / `NO_PATTERNS`），不要抛异常
+
+`_bind_payloads()` 把解析出的编号绑定到真实候选对象上，并按调用方所处的层级**强制改写** `scope_hint` 与 `topic`：TopicCurator 产出的一律是 topic 层并带上本 topic，GeneralCurator 产出的一律是 general 层且 topic 为 `None`。不能信任模型在这两个字段上的输出。
+
+两个 curator 共享一个基类，差别只在 prompt 与层级。两者都必须做到：
+- **候选为空时直接返回空列表，不发起模型调用** —— 省调用，也避免 prompt 里出现空列表
+- **任何异常都降级为返回空列表并记 warning**，绝不向上抛。设计文档 §5.5 要求 skill 更新失败不能破坏底层 baseline，这是落地点
+- prompt 里要如实填入当前槽位占用（`{used}/{cap}`），槽位满时声明只能 MERGE / REVISE / DELETE / SKIP
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -2636,22 +2360,10 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'alphaapollo.core.ha
 
 `alphaapollo/core/harness/arms.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-from __future__ import annotations
-
-import logging
-from pathlib import Path
-
-from alphaapollo.core.harness.accounting import role_scope
-from alphaapollo.core.harness.evolver import GeneralCurator, TopicCurator
-from alphaapollo.core.harness.reflect import (build_reflect_context, reflect,
-                                              sanitize_feedback)
-from alphaapollo.core.harness.render import (NEUTRAL_SYSTEM_PROMPT, count_tokens,
-                                             render_harness)
-from alphaapollo.core.harness.store import Budget, Caps, SkillStore
-
-log = logging.getLogger(__name__)
-
 _RAW_HEADER = ("You are a competition mathematics solver. Summaries of your own previous "
                "attempts on other problems follow. Use them if relevant.")
 
@@ -2662,180 +2374,27 @@ Topic: {topic}
 Outcome: {outcome}
 Verifier feedback: {verifier_feedback}
 Reasoning excerpt: {reasoning_excerpt}"""
-
-
-class CrossProblemArm:
-    """Every arm must emit a non-empty system prompt so that the three runs
-    differ in content only, never in message structure."""
-
-    name = "base"
-
-    def begin_batch(self, batch_idx: int) -> None: ...
-    def system_prompt_for(self, problem: dict) -> str: return NEUTRAL_SYSTEM_PROMPT
-    def record_selection(self, problem: dict, result: dict) -> None: ...
-    def observe(self, problem: dict, result: dict) -> None: ...
-    def end_batch(self, batch_idx: int) -> list[dict]: return []
-
-
-class BaselineArm(CrossProblemArm):
-    name = "baseline"
-
-
-class RawExperienceArm(CrossProblemArm):
-    name = "raw_experience"
-
-    def __init__(self, agent, budget: Budget | None = None):
-        self.agent = agent
-        self.budget = budget or Budget()
-        self.pool: list[dict] = []
-        self._pending: list[dict] = []
-        self._frozen_pool: list[dict] = []
-
-    def begin_batch(self, batch_idx: int) -> None:
-        self._frozen_pool = list(self.pool)
-
-    def system_prompt_for(self, problem: dict) -> str:
-        picked, used = [], 0
-        question_words = set(problem["question"].lower().split())
-        ranked = sorted(self._frozen_pool,
-                        key=lambda e: (-len(question_words & set(e["text"].lower().split())), e["idx"]))
-        for entry in ranked:
-            if len(picked) >= self.budget.b or used + entry["tokens"] > self.budget.tokens:
-                continue
-            picked.append(entry)
-            used += entry["tokens"]
-        if not picked:
-            return NEUTRAL_SYSTEM_PROMPT
-        body = "\n".join(f"- {e['text']}" for e in picked)
-        return f"{_RAW_HEADER}\n\n## Previous attempts\n{body}"
-
-    def observe(self, problem: dict, result: dict) -> None:
-        self._pending.append((problem, result))
-
-    def end_batch(self, batch_idx: int) -> list[dict]:
-        records = []
-        for problem, result in self._pending:
-            prompt = _SUMMARY_PROMPT.format(
-                topic=problem["topic"],
-                outcome="solved" if result["pass_final"] else "failed",
-                verifier_feedback=sanitize_feedback(result["verifier_feedback"]),
-                reasoning_excerpt=result["reasoning_excerpt"],
-            )
-            try:
-                with role_scope("summarizer"):
-                    text = self.agent.get_action_from_gpt(prompt).strip()
-            except Exception as exc:  # noqa: BLE001
-                log.warning("raw-experience summarisation failed, skipping: %s", exc)
-                continue
-            entry = {"idx": problem["problem_idx"], "text": text, "tokens": count_tokens(text)}
-            self.pool.append(entry)
-            records.append({"op": "ADD", "actor": "summarizer", "accepted": True,
-                            "problem_idx": problem["problem_idx"]})
-        self._pending = []
-        return records
-
-
-class EvoHarnessArm(CrossProblemArm):
-    name = "evo_harness"
-
-    def __init__(self, store_root: str | Path, agent, caps: Caps | None = None,
-                 budget: Budget | None = None, frozen: bool = False,
-                 feedback_level: str = "standard"):
-        self.store = SkillStore(store_root, caps=caps or Caps(), budget=budget or Budget())
-        self.agent = agent
-        self.frozen = frozen
-        self.feedback_level = feedback_level
-        self.topic_curator, self.general_curator = TopicCurator(), GeneralCurator()
-        self._frozen_skills = []
-        self._pending: list[tuple[dict, dict]] = []
-        self._last_selection: dict[int, list] = {}
-
-    def begin_batch(self, batch_idx: int) -> None:
-        self._frozen_skills = self.store.snapshot()
-
-    def system_prompt_for(self, problem: dict) -> str:
-        picked = self.store.select(problem["question"], problem["topic"])
-        self._last_selection[problem["problem_idx"]] = picked
-        return render_harness(picked)
-
-    def record_selection(self, problem: dict, result: dict) -> None:
-        picked = self._last_selection.get(problem["problem_idx"], [])
-        self.store.record_usage(picked, success=bool(result["pass_final"]))
-        self.store.log_selection(
-            problem_idx=problem["problem_idx"], topic=problem["topic"],
-            selected=[{"skill_id": s.id, "tokens": s.n_tokens} for s in picked],
-            total_inject_tokens=sum(s.n_tokens for s in picked),
-            pass1_round0=result["pass1_round0"], pass_final=result["pass_final"],
-        )
-
-    def observe(self, problem: dict, result: dict) -> None:
-        self._pending.append((problem, result))
-
-    def end_batch(self, batch_idx: int) -> list[dict]:
-        pending, self._pending = self._pending, []
-        if self.frozen:
-            return []
-
-        candidates, questions, truths = [], [], []
-        for problem, result in pending:
-            if result["pass_final"]:
-                continue  # paper Eq. (6): reflect on failures only
-            context = build_reflect_context(
-                topic=problem["topic"], problem_shape=problem["problem_shape"],
-                final_answer_given=result["final_answer_given"], outcome="failed",
-                verifier_feedback=result["verifier_feedback"],
-                tool_errors=result["tool_errors"],
-                reasoning_excerpt=result["reasoning_excerpt"],
-                round_count=result["round_count"],
-                # Appendix E.1 feeds the related existing skills back into the
-                # proposal step; reuse what was already selected for this problem
-                # so this costs nothing extra.
-                related_skills=self._last_selection.get(problem["problem_idx"], []),
-            )
-            try:
-                candidate = reflect(self.agent, context, feedback_level=self.feedback_level)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("reflection failed for problem %s: %s", problem["problem_idx"], exc)
-                continue
-            if candidate is None:
-                continue
-            candidate.evidence = [f"p_{problem['problem_idx']:04d}"]
-            candidates.append((problem["topic"], candidate))
-            questions.append(problem["question"])
-            truths.append(str(problem.get("ground_truth", "")))
-
-        if not candidates:
-            return []
-
-        edits = []
-        for topic in sorted({t for t, _ in candidates}):
-            subset = [c for t, c in candidates if t == topic]
-            existing = [s for s in self.store.all() if s.level != "general" and s.topic == topic]
-            edits += self.topic_curator.curate(self.agent, existing=existing, candidates=subset,
-                                               topic=topic, caps=self.store.caps)
-        general_existing = [s for s in self.store.all() if s.level == "general"]
-        edits += self.general_curator.curate(self.agent, existing=general_existing,
-                                             candidates=[c for _, c in candidates],
-                                             caps=self.store.caps)
-
-        try:
-            return self.store.apply(edits, problem_idx=pending[-1][0]["problem_idx"],
-                                    batch=batch_idx, question_texts=questions,
-                                    ground_truths=truths)
-        except Exception as exc:  # noqa: BLE001
-            log.error("harness update failed, harness left unchanged: %s", exc)
-            return []
-
-
-def build_arm(name: str, **kwargs) -> CrossProblemArm:
-    if name == "baseline":
-        return BaselineArm()
-    if name in ("raw", "raw_experience"):
-        return RawExperienceArm(**kwargs)
-    if name in ("evo", "evo_harness"):
-        return EvoHarnessArm(**kwargs)
-    raise ValueError(f"unknown arm: {name!r}")
 ```
+
+### 实现思路
+
+`CrossProblemArm` 是基类，五个方法的默认实现都是空操作或返回中性值 —— `BaselineArm` 因此只需继承、不写任何代码。**基类的 `system_prompt_for()` 必须返回 `NEUTRAL_SYSTEM_PROMPT` 而非空串**，理由见 Task 3。
+
+`RawExperienceArm`：
+- `begin_batch()` 把经验池**拷贝**成本批冻结视图；后续 `system_prompt_for()` 只读这个冻结视图，不读活的池子。这样本批内新产生的摘要影响不到本批
+- 选择用与 Evo 组**相同的 `b` 与 `T` 预算**，排序用题面与摘要的词重合。两组的差别必须纯粹是"提炼过的经验 vs 原始摘要"，不能是"注入了多少"
+- `observe()` 只攒，`end_batch()` 才逐条调用 summarizer 生成摘要入池。**成功和失败的题都要存** —— 这正是它与 Evo 组的对照点（后者只从失败中学）
+- 单条摘要生成失败时跳过并记 warning，不影响其余
+
+`EvoHarnessArm`：
+- `begin_batch()` 调 `store.snapshot()` 冻结
+- `system_prompt_for()` 调 `store.select()` 并**记住本题选中了哪些**，供稍后 `record_selection()` 更新使用统计与写 selection 日志
+- `observe()` 只攒
+- `end_batch()` 是完整的编译流程：**只对失败的题**调用 Reflect（论文正文式 6）→ 按 topic 分组交给 TopicCurator → 全部候选交给 GeneralCurator → 汇总成编辑集交给 `store.apply()`
+- `frozen=True` 时 `end_batch()` 必须是彻底的空操作，一条日志都不写 —— held-out 评测靠它保证 harness 不被更新
+- 每一段都要包异常处理：Reflect 失败跳过该候选，`apply()` 失败记 error 并让 harness 保持原状
+
+`build_arm()` 按名字分派，未知名字抛 `ValueError`。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -2970,59 +2529,30 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'alphaapollo.core.ha
 
 `alphaapollo/core/harness/loader.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-from __future__ import annotations
-
-from pathlib import Path
-
-import pandas as pd
-
 DEFAULT_TOPICS = ("algebra", "number_theory", "combinatorics", "geometry")
 
 _FIELDS = ("question", "ground_truth", "gt_traj", "topic", "problem_shape",
            "technique", "year", "contest", "number")
-
-
-def load_stream(path: str | Path) -> list[dict]:
-    """Keep topic/year/technique, which load_informal_math_data drops
-    (utils/dataset_loader.py:116-118)."""
-    frame = pd.read_parquet(path)
-    problems: list[dict] = []
-    for idx, row in enumerate(frame.to_dict("records")):
-        info = row.get("extra_info") or {}
-        problem = {field: info.get(field, "") for field in _FIELDS}
-        problem["problem_idx"] = idx
-        problems.append(problem)
-    return problems
-
-
-def batches(problems: list, batch_size: int = 8) -> list[list]:
-    full = len(problems) // batch_size
-    return [problems[i * batch_size:(i + 1) * batch_size] for i in range(full)]
-
-
-def interleave(problems: list[dict], batch_size: int = 8,
-               topics: tuple[str, ...] = DEFAULT_TOPICS) -> list[dict]:
-    if batch_size % len(topics) != 0:
-        raise ValueError(f"batch_size {batch_size} must be divisible by {len(topics)} topics")
-    per_topic = batch_size // len(topics)
-
-    queues = {
-        t: sorted((p for p in problems if p["topic"] == t),
-                  key=lambda p: (p.get("year", 0), str(p.get("contest", "")), p.get("number", 0)))
-        for t in topics
-    }
-
-    stream: list[dict] = []
-    while all(len(queues[t]) >= per_topic for t in topics):
-        for topic in topics:
-            stream.extend(queues[topic][:per_topic])
-            queues[topic] = queues[topic][per_topic:]
-
-    for position, problem in enumerate(stream):
-        problem["problem_idx"] = position
-    return stream
 ```
+
+### 实现思路
+
+`load_stream()` 读 parquet，从每行的 `extra_info` 里按 `_FIELDS` 取字段，缺失的填空串，并按行号赋予 `problem_idx`。**不要复用上游的 `load_informal_math_data`** —— 它只保留三个字段，topic 与 year 会被丢掉。同时务必保证 `gt_traj` 这个键存在（可以是空串），因为 `run_problem` 在 `evolving_main.py:563` 和 `:715` 无条件读它。
+
+`batches()` 按固定大小切分并**丢弃不足一批的尾巴** —— 半批会让 harness 更新点的间隔不一致。
+
+`interleave()` 实现设计文档 §15.3 的主题交错：
+1. 校验 `batch_size` 能被 topic 数整除，否则 `ValueError`
+2. 按 topic 分桶，每桶内部按 `(year, contest, number)` 排序 —— 这个三元组是确定性排序键，保证每次跑出来的任务流完全一样
+3. 循环：只要每个桶都还剩够一批的量，就从每个桶各取 `batch_size // topics` 道，依次拼进流里
+4. 任一桶不够了就停止，丢弃剩余
+5. 最后按流中的实际位置**重新编号** `problem_idx`
+
+第 5 步容易漏：后续所有日志、指标、batch 划分都以流位置为准，沿用原始编号会让 selection 日志与 wandb 的 step 对不上。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -3117,91 +2647,26 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'scripts'`（需在 
 
 `scripts/reuse_opportunity.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-"""Day-2 gate: does the adaptation stream contain any reuse opportunity at all?
-
-Run this after building the stream and BEFORE spending any API budget. A stream
-where almost every technique appears once cannot demonstrate cross-problem
-transfer, and a null result on it would be attributable to the data rather than
-to the method. Zero model calls.
-"""
-from __future__ import annotations
-
-import argparse
-import json
-import statistics
-import sys
-from collections import Counter, defaultdict
-
 GATE_MIN_REUSE = 0.2
-
-
-def topic_gap_stats(stream: list[dict]) -> dict:
-    positions: dict[str, list[int]] = defaultdict(list)
-    for problem in stream:
-        positions[problem["topic"]].append(problem["problem_idx"])
-
-    gaps = [b - a for seq in positions.values() for a, b in zip(seq, seq[1:])]
-    if not gaps:
-        return {"median": 0.0, "p90": 0.0}
-    gaps.sort()
-    return {"median": float(statistics.median(gaps)),
-            "p90": float(gaps[min(len(gaps) - 1, int(0.9 * len(gaps)))])}
-
-
-def technique_repeat_histogram(stream: list[dict]) -> dict[int, int]:
-    counts = Counter(p["technique"] for p in stream if p.get("technique"))
-    return dict(Counter(counts.values()))
-
-
-def reuse_upper_bound(stream: list[dict]) -> float:
-    if not stream:
-        return 0.0
-    seen: set[str] = set()
-    repeats = 0
-    for problem in stream:
-        technique = problem.get("technique")
-        if technique in seen:
-            repeats += 1
-        seen.add(technique)
-    return repeats / len(stream)
-
-
-def analyze(stream: list[dict]) -> dict:
-    histogram = technique_repeat_histogram(stream)
-    total_labels = sum(histogram.values())
-    singletons = histogram.get(1, 0)
-    bound = reuse_upper_bound(stream)
-    return {
-        "n_problems": len(stream),
-        "topic_gap": topic_gap_stats(stream),
-        "technique_histogram": histogram,
-        "n_distinct_techniques": total_labels,
-        "share_of_singleton_techniques": singletons / total_labels if total_labels else 0.0,
-        "reuse_upper_bound": bound,
-        "passes_gate": bound >= GATE_MIN_REUSE,
-    }
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stream", required=True, help="path to stream.parquet")
-    args = parser.parse_args()
-
-    from alphaapollo.core.harness.loader import load_stream
-
-    report = analyze(load_stream(args.stream))
-    print(json.dumps(report, indent=2))
-    if not report["passes_gate"]:
-        print(f"\nGATE FAILED: reuse upper bound {report['reuse_upper_bound']:.1%} "
-              f"< {GATE_MIN_REUSE:.0%}. Adjust the task stream before spending API budget.")
-        return 1
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
 ```
+
+### 实现思路
+
+三个统计函数都是纯计数，**零模型调用**，这是它能作为"开跑前门禁"的前提。
+
+`topic_gap_stats()`：按 topic 收集各自出现的位置序列，算相邻位置差，返回中位数与 p90。主题交错的流上这个值应稳定在 topic 数附近。
+
+`technique_repeat_histogram()`：先数每个技法标签出现几次，再数「出现 k 次的标签有几个」，返回 `{出现次数: 标签数}`。
+
+`reuse_upper_bound()`：顺序扫描，统计**非首次**出现的技法所占的题目比例。它回答的是"假设 skill 提炼得完美，理论上有多少题能受益于此前学到的东西"。
+
+`analyze()` 汇总以上三者，另外算出单次出现的标签占比，并给出 `passes_gate` 布尔值（阈值 `GATE_MIN_REUSE`）。
+
+`main()` 是 CLI：读 stream、打印 JSON 报告、**门禁不通过时返回退出码 1** 并打印一句明确的提示。用退出码而非仅打印，是为了能直接串进脚本，避免"看了一眼觉得还行就开跑"。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -3321,75 +2786,20 @@ Expected: FAIL —— `ModuleNotFoundError: No module named 'alphaapollo.core.ha
 
 `alphaapollo/core/harness/tracker.py`:
 
-```python
-from __future__ import annotations
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
 
-import json
-import logging
-from collections import Counter
-from pathlib import Path
+### 实现思路
 
-log = logging.getLogger(__name__)
+`HarnessTracker` 的构造函数建好输出目录，然后**尝试**初始化 wandb。关键要求：wandb 不可用、未登录、或 `enabled=False` 时，必须**静默降级为只写 jsonl**，绝不抛异常。单测不能依赖网络，正式跑也不该因为 wandb 掉线而中断实验。
 
+`log()` 每次追加一行 `{"step": ..., **metrics}` 到 `metrics.jsonl`，同时（若 wandb 可用）转发一份。jsonl 这份副本是为了让所有图表能离线复现 —— wandb 不是仓库产物，而作业要求结果可复现。
 
-class HarnessTracker:
-    """Dual-writes metrics to wandb and to a local jsonl.
+`log_harness_state()` 从 store 现算规模指标：general 条数、topic 总数、逐 topic 条数、总 token、平均单条 token，外加每条 skill 的命中次数与效用。注意 harness 容量上限只有 25 条，条数曲线几个 batch 就会走平，所以 **token 总量与平均长度才是更有信息量的主曲线**。
 
-    The evo path has no wandb integration at all (wandb only appears in the
-    rl_*/sft_* configs, which go through verl's trainer), so this layer is new.
-    The jsonl copy keeps every figure reproducible offline.
-    """
+`log_accounting()` 直接转发 `CallAccountant.snapshot()`。
 
-    def __init__(self, run_dir: str | Path, *, project: str | None = None,
-                 run_name: str | None = None, config: dict | None = None,
-                 enabled: bool = True):
-        self.run_dir = Path(run_dir)
-        self.run_dir.mkdir(parents=True, exist_ok=True)
-        self.metrics_path = self.run_dir / "metrics.jsonl"
-        self.wandb_run = None
-
-        if not enabled:
-            return
-        try:
-            import wandb
-
-            self.wandb_run = wandb.init(project=project, name=run_name,
-                                        config=config or {}, dir=str(self.run_dir))
-        except Exception as exc:  # noqa: BLE001 - tracking must never break a run
-            log.warning("wandb unavailable, falling back to jsonl only: %s", exc)
-            self.wandb_run = None
-
-    def log(self, step: int, metrics: dict) -> None:
-        with self.metrics_path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"step": step, **metrics}, ensure_ascii=False) + "\n")
-        if self.wandb_run is not None:
-            self.wandb_run.log(metrics, step=step)
-
-    def log_harness_state(self, step: int, store) -> None:
-        skills = store.all()
-        general = [s for s in skills if s.level == "general"]
-        topical = [s for s in skills if s.level != "general"]
-        per_topic = Counter(s.topic for s in topical)
-
-        metrics = {
-            "harness/n_general": len(general),
-            "harness/n_topic_total": len(topical),
-            "harness/total_tokens": sum(s.n_tokens for s in skills),
-            "harness/mean_skill_tokens": (sum(s.n_tokens for s in skills) / len(skills)) if skills else 0,
-        }
-        metrics.update({f"harness/n_topic/{t}": n for t, n in per_topic.items()})
-        metrics.update({f"usage/skill_hit/{s.id}": s.n_selected for s in skills})
-        metrics.update({f"usage/skill_utility/{s.id}": s.utility() for s in skills})
-        self.log(step, metrics)
-
-    def log_accounting(self, step: int, accountant) -> None:
-        self.log(step, accountant.snapshot())
-
-    def finish(self) -> None:
-        if self.wandb_run is not None:
-            self.wandb_run.finish()
-            self.wandb_run = None
-```
+`finish()` 关闭 wandb run，且要能安全地重复调用。
 
 - [ ] **Step 4: 运行测试确认通过**
 
@@ -3560,118 +2970,35 @@ Expected: FAIL —— `ModuleNotFoundError: No module named '...evolving_harness
 
 `alphaapollo/core/generation/evolving/evolving_harness_main.py`:
 
+> **以下是必须逐字采用的契约常量**（prompt 模板、角色名、正则），它们是跨 task 的接口或交付物本身，不是实现细节。
+> **实现逻辑写在其后的「实现思路」里，请据此自己写代码，不要期待这里有可抄的函数体。**
+
 ```python
-from __future__ import annotations
-
-import logging
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
-
-from alphaapollo.core.harness.accounting import role_scope
-from alphaapollo.core.harness.loader import batches
-from alphaapollo.core.harness.reflect import sanitize_feedback
-
-log = logging.getLogger(__name__)
-
-# env.py:125-128 parses <informalmath_verify> unconditionally, and
-# core/tools/informalmath_verify.py:107,176 echo "Matches ground truth" back to
-# the agent. No prompt template advertises the tag today, but that is not a
-# defence we are willing to rely on.
 _VERIFY_TAG = re.compile(r"<informalmath_verify>")
-
-
-class LeakageError(RuntimeError):
-    """Raised when a run touches a channel that would expose the ground truth."""
-
-
-def assert_no_gt_tool_call(action_text: str) -> None:
-    if _VERIFY_TAG.search(action_text or ""):
-        raise LeakageError("policy invoked <informalmath_verify>, which echoes the ground truth")
-
-
-def extract_result(problem_payload: dict) -> dict:
-    """run_problem's own success_rate averages over evolving rounds
-    (evolving_main.py:546-548, :822-824) and is therefore not Pass@1.
-    policy_answer_correct per round is the clean signal."""
-    steps = (problem_payload or {}).get("step_outputs") or []
-    if not steps:
-        return {"pass1_round0": 0, "pass_final": 0, "final_answer_given": "",
-                "verifier_feedback": "", "tool_errors": "", "reasoning_excerpt": "",
-                "round_count": 0}
-
-    last = steps[-1]
-    for step in steps:
-        assert_no_gt_tool_call(step.get("policy_action", ""))
-
-    return {
-        "pass1_round0": int(steps[0].get("policy_answer_correct", 0)),
-        "pass_final": int(last.get("policy_answer_correct", 0)),
-        "final_answer_given": str(last.get("policy_action", ""))[-200:],
-        "verifier_feedback": sanitize_feedback(last.get("verifier_report", "")),
-        "tool_errors": sanitize_feedback(last.get("tool_errors", "")),
-        "reasoning_excerpt": str(last.get("policy_action", ""))[:1200],
-        "round_count": len(steps),
-    }
-
-
-def run_stream(*, problems, arm, runtime_factory, run_problem_fn, tracker, accountant,
-               batch_size: int = 8, max_workers: int = 8) -> dict:
-    """Batch-serial, within-batch-parallel.
-
-    Every problem in a batch uses the harness frozen at begin_batch, and no
-    information flows between them, so parallelising inside a batch is exactly
-    the semantics of the paper's Eq. (2)-(4). Updates happen only at batch
-    boundaries, so a problem can never affect itself.
-    """
-    n_done = n_errors = 0
-
-    for batch_idx, batch in enumerate(batches(problems, batch_size)):
-        arm.begin_batch(batch_idx)
-        prompts = {p["problem_idx"]: arm.system_prompt_for(p) for p in batch}
-
-        results: dict[int, dict] = {}
-        with ThreadPoolExecutor(max_workers=max_workers) as pool:
-            futures = {
-                pool.submit(_run_one, p, prompts[p["problem_idx"]], runtime_factory,
-                            run_problem_fn): p
-                for p in batch
-            }
-            for future in as_completed(futures):
-                problem = futures[future]
-                try:
-                    results[problem["problem_idx"]] = future.result()
-                except LeakageError:
-                    raise
-                except Exception as exc:  # noqa: BLE001
-                    log.error("problem %s failed: %s", problem["problem_idx"], exc)
-                    n_errors += 1
-                    results[problem["problem_idx"]] = extract_result({})
-
-        for problem in batch:  # deterministic order for logging
-            result = results[problem["problem_idx"]]
-            arm.record_selection(problem, result)
-            arm.observe(problem, result)
-            tracker.log(problem["problem_idx"], {
-                "adapt/pass1_round0": result["pass1_round0"],
-                "adapt/pass_final": result["pass_final"],
-                "inject/n_tokens": len(prompts[problem["problem_idx"]].split()),
-            })
-            n_done += 1
-
-        arm.end_batch(batch_idx)
-        if getattr(arm, "store", None) is not None:
-            tracker.log_harness_state(n_done, arm.store)
-        tracker.log_accounting(n_done, accountant)
-
-    return {"n_problems": n_done, "n_errors": n_errors}
-
-
-def _run_one(problem, system_prompt, runtime_factory, run_problem_fn) -> dict:
-    runtime = runtime_factory(system_prompt)
-    with role_scope("solver"):
-        payload = run_problem_fn(problem["problem_idx"], problem, runtime)
-    return extract_result(payload.get("problem_payload"))
 ```
+
+### 实现思路
+
+`assert_no_gt_tool_call()` 在 action 文本里发现 `<informalmath_verify>` 标签就抛 `LeakageError`。这是**快速失败**而非记录后继续：该工具会把 `Matches ground truth: True/False` 回传给 agent，一旦触发，这一轮的数据就不能用了，继续跑只是浪费预算。
+
+`extract_result()` 从 `run_problem` 的返回值里提炼指标，有两个必须注意的点：
+
+1. **不要用 `run_problem` 自己的 `success_rate`**。它是跨 evolving round 的平均（`evolving_main.py:546-548` 与 `:822-824`），`evolving_round=3` 时取值只能是 {0, ⅓, ⅔, 1}，不是 Pass@1。干净的信号是每轮 step_output 里的 `policy_answer_correct`。
+2. 由它产出两个全 arm 统一的指标：`pass1_round0`（第 0 轮、题内进化之前的正确率，**这是 harness 注入效果最干净的度量**）与 `pass_final`（最后一轮，题内与跨题的联合效果）。两者分开报告。
+
+同时要对每一轮的 action 调用泄漏检查，并对喂给 Reflect 的文本调用 `sanitize_feedback()`。空的 step_outputs 要返回一份全零的结构，不能抛异常。
+
+`run_stream()` 是执行协议的落地，顺序不能改：
+
+1. `arm.begin_batch()` 冻结本批 harness
+2. **在并行之前**，串行地为本批每道题取好注入文本
+3. 并行执行 `run_problem`（只有这一步并行）
+4. 并行结束后，**按 batch 内的原始顺序**串行调用 `record_selection` / `observe` / 写指标 —— 顺序固定才能保证日志可复现
+5. `arm.end_batch()` 更新 harness，然后记录 harness 规模与调用账
+
+**第 2、4 步必须留在并行区之外**：store 的写入路径没有加锁，`_next_id()` 存在 TOCTOU 竞态，一旦把它们挪进并行区，两条不同的 skill 可能拿到同一个 id 而不报错。这是设计不变量，不是巧合，改动此处前务必重读这一条。
+
+单题失败要捕获、计数、填一份空结果继续跑，**唯独 `LeakageError` 必须向上抛** —— 泄漏是数据有效性问题，不是可容忍的偶发故障。
 
 - [ ] **Step 4: 运行测试确认通过**
 
