@@ -103,56 +103,172 @@ _ZERO_RESULT: dict[str, Any] = {
     "round_count": 0,
 }
 
+# Fields this module ever reads out of a `run_problem`-shaped payload. This is a whitelist, not a
+# blacklist, deliberately mirroring `reflect.build_reflect_context`'s own contract: `problem_payload`
+# and every `step_outputs` entry carry `ground_truth` / `gt_traj` (evolving_main.py:562-564,
+# 714-716, 828-833 -- at BOTH the payload's top level and on every single step_outputs entry), plus
+# `observation` / `next_observation` / `infos` / `policy_memory` / `verifier_memory` / `data_source`,
+# none of which anything below ever names. A `dict(entry)` copy or a `**entry` expansion anywhere in
+# this module would silently reintroduce the leak this whitelist exists to prevent -- the fields
+# below are read one at a time, by name, and nothing else.
+_MAX_FIELD_CHARS = 2000
+
+
+def _truncate(text: str, limit: int = _MAX_FIELD_CHARS) -> str:
+    """Cap a field's length before it can ever reach a prompt. Applied *after* `sanitize_feedback`
+    (never before): sanitizing first guarantees a GT-channel line is scrubbed in full even when it
+    would otherwise straddle the truncation boundary."""
+    text = text or ""
+    return text if len(text) <= limit else text[:limit] + " ...(truncated)"
+
+
+def _action_list(actions: Any) -> list[str]:
+    """Normalize `policy_actions` to a list of strings. It is a list in the real schema (one raw
+    action string per env; real payloads only ever run a single env for the informal_math_evolving
+    path, but this stays list-shaped regardless -- see `evolving_main.py:556-568`). A bare string
+    is accepted too, defensively, in case a caller hands this an already-flattened value -- and is
+    wrapped in a single-element list rather than iterated character-by-character."""
+    if isinstance(actions, str):
+        return [actions] if actions else []
+    if not actions:
+        return []
+    return [str(a) for a in actions if a]
+
+
+def _as_text(actions: Any) -> str:
+    return "\n".join(_action_list(actions))
+
+
+def _policy_rounds(step_outputs: list[dict]) -> dict[int, list[dict]]:
+    """Group ``role == "policy"`` entries by ``evolving_round`` (never ``role == "verifier"``
+    entries -- the two are interleaved in the same flat list, `evolving_main.py:556-568` for
+    policy vs. `:704-721` for verifier, and mixing them up is exactly the "policy 与 verifier 的行
+    混淆" failure mode this function exists to rule out structurally). Only ever reads `role`,
+    `evolving_round`, and `step` -- see the whitelist note above. Within one round there is
+    normally one `step_outputs` entry per policy step (a round can retry across several steps
+    before an environment is done); entries are sorted by `step` so the *last* one in each round's
+    list is always that round's own concluding attempt, never an earlier in-progress one."""
+    grouped: dict[int, list[dict]] = {}
+    for entry in step_outputs:
+        if entry.get("role") != "policy":
+            continue
+        grouped.setdefault(entry.get("evolving_round", 0), []).append(entry)
+    for entries in grouped.values():
+        entries.sort(key=lambda e: e.get("step", 0))
+    return grouped
+
+
+def _last_verifier_text(step_outputs: list[dict]) -> str:
+    """The most recent ``role == "verifier"`` entry's own action text (its `<report>...</report>`
+    reply) -- never a policy entry's. Returns `""` if the verifier path was never entered (e.g.
+    `verifier_configs.get("enabled")` was false for this run)."""
+    verifier_entries = [e for e in step_outputs if e.get("role") == "verifier"]
+    if not verifier_entries:
+        return ""
+    return _as_text(verifier_entries[-1].get("policy_actions"))
+
+
+def _tool_error_text(tool_events: list) -> str:
+    """Pull genuine tool-execution error text out of a round's `tool_events`
+    (`utils/utils.py:collect_tool_events`, `{"tool_name", "tool_input", "raw_observation",
+    "tool_payload"}` per event) -- and ONLY `tool_payload["stderr"]` / a non-"Finished"
+    `tool_payload["run_status"]` (the python_code tool's real error channel,
+    `core/tools/python_code.py:193-273`). This never reads a tool's `stdout` or
+    `raw_observation`: the `informalmath_verify` tool's own `stdout` is exactly where the
+    'Matches ground truth: .../Matches GT: ...' leak text lives (`core/tools/
+    informalmath_verify.py`'s `call_informalmath_verify`), and that tool can also legitimately
+    print a ground-truth-derived execution result in the same field. Restricting to
+    stderr/run_status excludes that whole field *structurally*, rather than relying solely on
+    `sanitize_feedback()` to catch a specific known phrase inside it after the fact."""
+    lines: list[str] = []
+    for event in tool_events or []:
+        if not isinstance(event, dict):
+            continue
+        payload = event.get("tool_payload")
+        if not isinstance(payload, dict):
+            continue
+        stderr = (payload.get("stderr") or "").strip()
+        if stderr:
+            lines.append(stderr)
+        elif payload.get("run_status") not in (None, "Finished"):
+            lines.append(f"{event.get('tool_name', 'tool')}: {payload.get('run_status')}")
+    return "\n".join(lines)
+
 
 def extract_result(problem_payload: dict) -> dict:
     """Extract the seven fields every arm/metric consumer needs from one problem's
     ``run_problem``-shaped payload: ``pass1_round0``, ``pass_final``, ``final_answer_given``,
     ``verifier_feedback``, ``tool_errors``, ``reasoning_excerpt``, ``round_count``.
 
+    Reads ``problem_payload["step_outputs"]`` -- a flat list mixing ``role == "policy"`` entries
+    (`evolving_main.py:556-568`) and ``role == "verifier"`` entries (`:704-721`); a single
+    ``evolving_round`` can span several policy entries (one per step) before the round concludes.
     Two things this deliberately does NOT use, both explained in the design doc (S6.2④): the
     payload's own ``success_rate`` (an average across evolving rounds, not Pass@1 -- with
     ``evolving_round=3`` it can only take the values {0, 1/3, 2/3, 1}), and any round before the
-    last one for anything other than ``pass1_round0``. The clean signal is each round's own
-    ``policy_answer_correct``:
+    last one for anything other than ``pass1_round0``. The clean signal is each policy round's own
+    ``policy_answer_correct``, read off that round's *last* step (its concluding attempt):
 
     - ``pass1_round0`` is round 0's correctness -- the harness-injection effect *before* any
       in-problem self-correction had a chance to run, which is why it is the cleanest measure of
       what the cross-problem mechanism itself contributed.
     - ``pass_final`` is the last round's correctness -- the joint in-problem + cross-problem
       effect.
-    - the remaining fields describe the *last* round specifically, since that is the attempt a
-      failure-triggered Reflect call would actually be reflecting on.
+    - ``round_count`` is the number of *distinct* ``evolving_round`` values seen among policy
+      entries (not ``max(evolving_round) + 1``): the two agree whenever rounds run contiguously
+      from 0, which is the only way `evolving_main.py`'s own `for evolving_round in
+      range(runtime["evolving_round"])` loop ever produces them, but counting distinct values
+      degrades safely instead of silently overcounting if that ever stops being true.
+    - ``final_answer_given`` / ``reasoning_excerpt`` / ``tool_errors`` all describe the *last*
+      round specifically, since that is the attempt a failure-triggered Reflect call would
+      actually be reflecting on; ``verifier_feedback`` is the most recent verifier reply in the
+      whole payload (normally that same last round's own verifier pass).
 
-    Every round's action text is checked for the ground-truth tool-call leak
-    (``assert_no_gt_tool_call``) before anything else happens; a hit raises ``LeakageError``,
-    which is not caught here and must propagate to the caller. ``verifier_feedback``,
-    ``tool_errors``, and ``reasoning_excerpt`` are all passed through ``sanitize_feedback()`` --
-    every one of them can end up in a Reflect prompt (``arms.py``'s ``EvoHarnessArm.end_batch``),
-    and a reasoning trace can itself narrate/quote the tool's GT-matching line even when the
-    verifier report proper does not (see ``reflect.py``'s module docstring).
+    Every action text this payload carries -- policy or verifier -- is checked for the
+    ground-truth tool-call leak (``assert_no_gt_tool_call``) before anything else happens; a hit
+    raises ``LeakageError``, which is not caught here and must propagate to the caller.
+    ``verifier_feedback``, ``tool_errors``, and ``reasoning_excerpt`` are all passed through
+    ``sanitize_feedback()`` -- every one of them can end up in a Reflect prompt (``arms.py``'s
+    ``EvoHarnessArm.end_batch``), and a reasoning trace can itself narrate/quote the tool's
+    GT-matching line even when the verifier report proper does not (see ``reflect.py``'s module
+    docstring). This function never reads ``ground_truth`` / ``gt_traj`` / ``data_source`` /
+    ``observation`` / ``next_observation`` / ``infos`` / ``policy_memory`` / ``verifier_memory``
+    from ``problem_payload`` or any ``step_outputs`` entry -- see the whitelist note above.
 
-    An empty (or missing) ``step_outputs`` returns an all-zero structure -- this is a normal,
-    expected shape (e.g. a problem that produced no rounds at all), not an error condition, so it
-    never raises.
+    An empty (or missing) ``step_outputs``, or one with no ``role == "policy"`` entries at all,
+    returns an all-zero structure -- this is a normal, expected shape (e.g. a problem that
+    produced no rounds at all), not an error condition, so it never raises.
     """
     step_outputs = (problem_payload or {}).get("step_outputs") or []
-    if not step_outputs:
+
+    for entry in step_outputs:
+        for action in _action_list(entry.get("policy_actions")):
+            assert_no_gt_tool_call(action)
+
+    rounds = _policy_rounds(step_outputs)
+    if not rounds:
         return dict(_ZERO_RESULT)
 
-    for step in step_outputs:
-        assert_no_gt_tool_call(step.get("policy_action", ""))
+    round_indices = sorted(rounds)
+    round0_entry = rounds[round_indices[0]][-1]
+    final_round_steps = rounds[round_indices[-1]]
+    final_entry = final_round_steps[-1]
 
-    round0 = step_outputs[0]
-    final = step_outputs[-1]
+    final_actions_text = _as_text(final_entry.get("policy_actions"))
+    final_answer_given = final_entry.get("policy_answer") or final_actions_text
+
+    final_round_tool_events: list = []
+    for step_entry in final_round_steps:
+        final_round_tool_events.extend(step_entry.get("tool_events") or [])
 
     return {
-        "pass1_round0": int(bool(round0.get("policy_answer_correct"))),
-        "pass_final": int(bool(final.get("policy_answer_correct"))),
-        "final_answer_given": final.get("policy_action", ""),
-        "verifier_feedback": sanitize_feedback(final.get("verifier_report", "") or ""),
-        "tool_errors": sanitize_feedback(final.get("tool_errors", "") or ""),
-        "reasoning_excerpt": sanitize_feedback(final.get("reasoning_excerpt", final.get("policy_action", "")) or ""),
-        "round_count": len(step_outputs),
+        "pass1_round0": int(bool(round0_entry.get("policy_answer_correct"))),
+        "pass_final": int(bool(final_entry.get("policy_answer_correct"))),
+        "final_answer_given": _truncate(sanitize_feedback(str(final_answer_given))),
+        "verifier_feedback": _truncate(sanitize_feedback(_last_verifier_text(step_outputs))),
+        "tool_errors": _truncate(sanitize_feedback(_tool_error_text(final_round_tool_events))),
+        "reasoning_excerpt": _truncate(sanitize_feedback(final_actions_text)),
+        "round_count": len(round_indices),
     }
 
 
@@ -271,6 +387,12 @@ def run(config: str | None = None) -> None:
     shared instance) so that concurrently-running problems in the same batch, which the harness
     protocol deliberately gives *different* injected text, never race on a single mutable
     ``Agent.system_prompt`` attribute.
+
+    ``run_stream``/``extract_result`` are exercised by ``tests/harness/test_driver.py`` against
+    both a minimal and a fully-realistic ``run_problem``-shaped payload, but this function itself
+    is **not** -- it depends on Task 15's config files and prepared problem stream, neither of
+    which exists yet, and it has never been invoked against a real, running ``run_problem``. Treat
+    this wiring as best-effort until it has been run end to end at least once.
     """
     if not config:
         raise ValueError("--config is required, e.g. --config examples/configs/harness_evo.yaml")
