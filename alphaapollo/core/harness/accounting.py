@@ -57,8 +57,20 @@ logger = logging.getLogger(__name__)
 SOLVER_ROLES = ("solver", "summarizer", "aggregator")
 
 # Management-side calls: every LLM call the Task B compilation loop makes to turn a completed
-# trajectory into harness updates (reflect / curate), plus any offline labeling pass.
-MGMT_ROLES = ("reflect", "topic_curator", "general_curator", "offline_labeling")
+# trajectory into harness updates (reflect / curate), plus any offline labeling pass, plus the
+# RawExperience arm's per-problem trajectory summariser. That summariser call is deliberately
+# its own role, "raw_summarizer", rather than reusing "summarizer": "summarizer" already names
+# the upstream, in-problem helper agent the frozen baseline constructs on the fly
+# (evolving_main.py:607, see SOLVER_ROLES above) to compress a single problem's own history --
+# it is solver-side cost that exists independent of this project. RawExperienceArm's summariser
+# is a *different* call, made once per completed problem specifically to produce the raw,
+# cross-problem "experience" note that arm injects into later problems -- i.e. it is that arm's
+# entire cross-problem management overhead, the direct analogue of what reflect()/the curators
+# are for EvoHarnessArm. Folding it into "summarizer" would silently count it as solver-side and
+# make RawExperience look like it has near-zero management overhead in Task C's cost report,
+# when in fact it makes one such call per problem (denser than EvoHarness's per-batch
+# reflect/curate calls).
+MGMT_ROLES = ("reflect", "topic_curator", "general_curator", "raw_summarizer", "offline_labeling")
 
 # A ContextVar (not a plain module-level global) because problems within a batch may run
 # concurrently across threads; each thread must see only the role its own call stack set, never

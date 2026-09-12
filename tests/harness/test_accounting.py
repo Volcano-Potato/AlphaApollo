@@ -149,6 +149,29 @@ def test_snapshot_separates_solver_side_from_management_side(agent):
     assert snap["calls/aggregator"] == 1
 
 
+def test_raw_summarizer_role_is_management_side_not_solver_side(agent):
+    """"raw_summarizer" (RawExperienceArm's per-problem trajectory-summary call, added
+    alongside arms.py) must roll into calls/mgmt_side_total, and must NOT be confused with
+    "summarizer" (the upstream, in-problem helper the frozen baseline already uses), which
+    stays solver-side. See MGMT_ROLES' comment in accounting.py for why these are deliberately
+    two different role names."""
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        with role_scope("summarizer"):
+            agent.get_action_from_gpt("q")
+        with role_scope("raw_summarizer"):
+            agent.get_action_from_gpt("q")
+            agent.get_action_from_gpt("q")
+    finally:
+        uninstall()
+
+    snap = acc.snapshot()
+    assert snap["calls/summarizer"] == 1 and snap["calls/raw_summarizer"] == 2
+    assert snap["calls/solver_side_total"] == 1
+    assert snap["calls/mgmt_side_total"] == 2
+
+
 def test_calls_outside_any_role_scope_are_attributed_to_unscoped(agent):
     acc = CallAccountant()
     uninstall = install_accounting(acc)

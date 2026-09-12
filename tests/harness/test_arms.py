@@ -2,6 +2,9 @@ import json
 
 import pytest
 
+import alphaapollo.core.generation.evolving.utils.agent as agent_module
+from alphaapollo.core.generation.evolving.utils.agent import Agent
+from alphaapollo.core.harness.accounting import CallAccountant, install_accounting
 from alphaapollo.core.harness.arms import BaselineArm, EvoHarnessArm, RawExperienceArm, build_arm
 from alphaapollo.core.harness.render import NEUTRAL_SYSTEM_PROMPT
 from alphaapollo.core.harness.schema import Skill
@@ -251,6 +254,25 @@ def test_record_selection_without_a_prior_system_prompt_for_call_does_not_crash(
     assert line["skill_ids"] == []
 
 
+def test_end_batch_tags_harness_edits_with_the_batch_index_not_a_problem_index(tmp_path):
+    """store.apply() takes one `problem_idx` per call, but a batch's accepted edits can be
+    drawn from multiple failed problems (see the comment at the `store.apply()` call site in
+    EvoHarnessArm.end_batch) -- pins down that the harness log and the resulting skill's
+    `created_at` are tagged with the *batch*'s own index (3 here), not the one problem's own
+    `problem_idx` (7, deliberately chosen to differ from the batch index so a bug that swaps
+    them would be caught)."""
+    arm = EvoHarnessArm(store_root=tmp_path / "tag",
+                        agent=ScriptedAgent([REFLECTION, "ADD: 1\nREASON: useful", "NO_PATTERNS"]))
+    weird_problem = {**PROBLEM, "problem_idx": 7}
+    arm.begin_batch(3)
+    arm.observe(weird_problem, FAILED)
+    results = arm.end_batch(3)
+
+    assert results[0]["problem_idx"] == 3
+    assert results[0]["batch"] == 3
+    assert arm.store.all()[0].created_at == 3
+
+
 def test_baseline_and_raw_record_selection_is_a_safe_no_op(arms):
     """Baseline and RawExperience have no skills to record usage for, but record_selection()
     must still be unconditionally callable without raising (brief requirement)."""
@@ -258,3 +280,107 @@ def test_baseline_and_raw_record_selection_is_a_safe_no_op(arms):
         arm = arms[name]
         arm.begin_batch(0)
         arm.record_selection(PROBLEM, FAILED)
+
+
+# ---------------------------------------------------------------------------
+# Accounting: RawExperience's per-problem summariser call must be counted as
+# management-side cost (Task C's "solver calls vs. skill-management calls,
+# reported separately" requirement). A ScriptedAgent test double CANNOT catch a
+# missing role_scope() here: install_accounting() patches Agent.get_action_from_gpt
+# at the *class* level, so a plain stub object that isn't an `Agent` instance never
+# goes through the patch at all, and any missing role_scope() would silently pass.
+# These tests therefore construct a real `Agent` (with only `OpenAI` itself
+# monkeypatched out, exactly as tests/harness/test_accounting.py's own `agent`
+# fixture does, for the same proxy/socksio-avoidance reason documented there).
+# ---------------------------------------------------------------------------
+
+
+class FakeOpenAIClient:
+    def __init__(self, **kwargs):
+        self.init_kwargs = kwargs
+
+
+class SequencedFakeCompletions:
+    """Returns each of ``replies`` in order on successive ``.create()`` calls, then repeats
+    "NO_PROPOSALS" once exhausted -- mirrors ``ScriptedAgent``'s own fallback (this file's
+    stub-agent test double), so a curator call that outruns a short scripted reply list
+    degrades to a harmless no-op instead of an ``IndexError``."""
+
+    def __init__(self, replies):
+        self.replies = list(replies)
+        self.kwargs_seen = []
+
+    def create(self, **kwargs):
+        self.kwargs_seen.append(kwargs)
+        content = self.replies.pop(0) if self.replies else "NO_PROPOSALS"
+        message = type("M", (), {"content": content})()
+        usage = type("U", (), {"prompt_tokens": 11, "completion_tokens": 5})()
+        return type("R", (), {"usage": usage, "choices": [type("C", (), {"message": message})()]})()
+
+
+@pytest.fixture
+def make_real_agent(monkeypatch):
+    """Factory for a *real* ``Agent`` instance (only ``OpenAI`` itself monkeypatched out, exactly
+    as ``tests/harness/test_accounting.py``'s own ``agent`` fixture does) that returns ``replies``
+    in order. Needed because ``install_accounting()`` patches ``Agent.get_action_from_gpt`` at the
+    class level -- a plain stub object such as this file's ``ScriptedAgent`` is never an ``Agent``
+    instance, so it never goes through the patch at all, and a missing ``role_scope()`` around a
+    real call site would silently pass every ``ScriptedAgent``-based test in this file."""
+    monkeypatch.setattr(agent_module, "OpenAI", FakeOpenAIClient)
+
+    def _make(replies):
+        a = Agent({"model_name": "m", "base_url": "http://x/v1", "api_key": "EMPTY"})
+        completions = SequencedFakeCompletions(replies)
+        a.client = type("C", (), {"chat": type("Ch", (), {"completions": completions})()})()
+        return a
+
+    return _make
+
+
+def test_raw_experience_summariser_calls_are_accounted_as_management_side(make_real_agent, tmp_path):
+    """RawExperienceArm's per-problem summariser call is its ENTIRE cross-problem management
+    overhead. If it isn't tagged with role_scope("raw_summarizer"), Task C's cost report would
+    show RawExperience as having near-zero management overhead while EvoHarness shows several
+    calls per batch -- exactly backwards, since Raw's summariser fires once per problem
+    (denser) while Evo's reflect/curate fire once per batch."""
+    agent = make_real_agent(["A prior attempt failed on modular arithmetic."] * 3)
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        arm = RawExperienceArm(agent=agent)
+        arm.begin_batch(0)
+        for i in range(3):
+            arm.observe({**PROBLEM, "problem_idx": i}, FAILED)
+        arm.end_batch(0)
+    finally:
+        uninstall()
+
+    snap = acc.snapshot()
+    assert snap["calls/raw_summarizer"] == 3
+    assert snap["calls/mgmt_side_total"] == 3
+    assert snap.get("calls/solver_side_total", 0) == 0
+
+
+def test_evo_harness_arm_introduces_no_bare_unaccounted_model_call(make_real_agent, tmp_path):
+    """Verifies, rather than assumes, that EvoHarnessArm's own agent calls (reflect() and both
+    curators) are all correctly role-scoped internally, and that arms.py itself adds no
+    additional bare `get_action_from_gpt` call on this path: every call this batch makes must
+    land under a named mgmt role, none under "unscoped", and none under any solver role."""
+    agent = make_real_agent([REFLECTION, "ADD: 1\nREASON: useful", "NO_PATTERNS"])
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        arm = EvoHarnessArm(store_root=tmp_path / "acct", agent=agent)
+        arm.begin_batch(0)
+        arm.observe(PROBLEM, FAILED)
+        arm.end_batch(0)
+    finally:
+        uninstall()
+
+    snap = acc.snapshot()
+    assert snap.get("calls/unscoped", 0) == 0
+    assert snap["calls/reflect"] == 1
+    assert snap["calls/topic_curator"] == 1
+    assert snap["calls/general_curator"] == 1
+    assert snap["calls/mgmt_side_total"] == 3
+    assert snap.get("calls/solver_side_total", 0) == 0

@@ -54,6 +54,7 @@ from __future__ import annotations
 import logging
 import re
 
+from alphaapollo.core.harness.accounting import role_scope
 from alphaapollo.core.harness.evolver import GeneralCurator, TopicCurator
 from alphaapollo.core.harness.reflect import _strip_reasoning, build_reflect_context, reflect, sanitize_feedback
 from alphaapollo.core.harness.render import NEUTRAL_SYSTEM_PROMPT, count_tokens, render_harness
@@ -254,7 +255,12 @@ class RawExperienceArm(CrossProblemArm):
                     verifier_feedback=sanitize_feedback(result.get("verifier_feedback", "")),
                     reasoning_excerpt=result.get("reasoning_excerpt", ""),
                 )
-                reply = self.agent.get_action_from_gpt(prompt)
+                # "raw_summarizer", never "summarizer" -- see accounting.py's MGMT_ROLES comment.
+                # This is this arm's entire cross-problem management overhead (one call per
+                # completed problem), and Task C requires it reported as management-side cost,
+                # not folded into the upstream in-problem summariser's solver-side bucket.
+                with role_scope("raw_summarizer"):
+                    reply = self.agent.get_action_from_gpt(prompt)
                 summary = _strip_reasoning(reply or "").strip()
                 if not summary:
                     raise ValueError("summarizer returned no usable text")
@@ -371,6 +377,15 @@ class EvoHarnessArm(CrossProblemArm):
         for cand, topic in zip(candidates, candidate_topics):
             by_topic.setdefault(topic, []).append(cand)
 
+        # `self.store.all()` (live), not `self._frozen_snapshot`, is deliberate and safe here:
+        # nothing between `begin_batch()` and the `store.apply()` call below ever mutates a
+        # skill's trigger/lesson/failure_mode (the only fields `_render_existing` reads) --
+        # `record_selection()` can run concurrently with an open batch, but it only touches
+        # `n_selected`/`n_selected_success` via `record_usage()`, which `_render_existing` never
+        # looks at. So the two views are provably identical in content at this point, and using
+        # the live one avoids an extra deep copy. This equivalence is *not* enforced by a type or
+        # test, though -- it would silently break if a future change let something else mutate
+        # skill content before `apply()` runs in the same `end_batch()`.
         for topic, topic_candidates in by_topic.items():
             existing = [s for s in self.store.all() if s.level == "topic" and s.topic == topic]
             edits.extend(TopicCurator().curate(self.agent, existing=existing,
@@ -392,6 +407,13 @@ class EvoHarnessArm(CrossProblemArm):
         question_texts = [p.get("question", "") for p, _ in failed]
         ground_truths = [p.get("ground_truth", "") for p, _ in failed]
         try:
+            # `problem_idx=batch_idx`, not any one failed problem's own index: `store.apply()`
+            # takes a single `problem_idx` per call, but this call's edits are typically drawn
+            # from *multiple* failed problems in the batch (see step 1) -- there is no single
+            # problem this batch-level compilation step belongs to. `batch` is already logged
+            # separately for that purpose; `problem_idx`/`created_at` here is read-side
+            # provenance metadata only (never a decision input elsewhere), so tagging it with the
+            # batch's own index is the least misleading choice among several arbitrary ones.
             return self.store.apply(edits, problem_idx=batch_idx, batch=batch_idx,
                                      question_texts=question_texts, ground_truths=ground_truths)
         except Exception:
