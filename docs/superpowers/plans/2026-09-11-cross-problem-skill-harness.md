@@ -26,12 +26,14 @@
 
   优先攻击方向：正则的边界行为（句末、行首、相邻标点、空输入）、由 LLM 产出因而不可信的字段（`name`、`trigger` 等）、恰好等于阈值的边界值、以及同一逻辑的两个相反方向（该拒的拒了吗 / 该放的放了吗）。
 
-**环境**（已于 2026-09-11 验证可用）：conda 环境 `alphaapollo-dev`（Python 3.12.14, macOS arm64），`pip install -e . --no-deps` + 手工最小依赖集。已验证可 import：`Agent`、`run_problem`、`create_runtime_for_problem`、`load_informal_math_data`、`pandas/openai/omegaconf/fire`、`wandb 0.30.0`、`pytest 9.1.1`、`ruff 0.16.7`。
+**环境**（已于 2026-09-11 验证可用，2026-09-12 补装 `socksio`）：conda 环境 `alphaapollo-dev`（Python 3.12.14, macOS arm64），`pip install -e . --no-deps` + 手工最小依赖集。已验证可 import：`Agent`、`run_problem`、`create_runtime_for_problem`、`load_informal_math_data`、`pandas/openai/omegaconf/fire`、`wandb 0.30.0`、`pytest 9.1.1`、`ruff 0.16.7`。
 
 ⚠️ **两个必须知道的环境事实**：
 
 1. **`alphaapollo` 包并未被安装**。`pyproject.toml` 的 `packages.find where = ["alphaapollo/core/generation"]` 只暴露了 `verl`；实测 `cd /tmp && python -c "import alphaapollo"` 报 `ModuleNotFoundError`。**所有命令必须从仓库根目录执行**，或让 PYTHONPATH 包含它。`tests/conftest.py`（Task 0）与 `[tool.pytest.ini_options].pythonpath` 负责在测试里兜住这一点。
 2. **`alphaapollo/core/__init__.py` 的最后一行是裸调用 `ensure_verl_alias()`**，无条件加载整个 verl 栈（ray / tensordict / torch / transformers）。实测 `import alphaapollo.core` 耗时约 2.9s。这是硬编码的包级耦合，绕不开；但该开销在一次 pytest session 内只付一次，不影响 TDD 循环，因此 harness 包保持在 `alphaapollo/core/harness/` 不动。
+
+⚠️ **若机器走 SOCKS 代理，必须 `pip install "httpx[socks]"`。** 本机 `all_proxy=socks5://...`，而 `Agent.__init__`（`utils/agent.py:27`）会真的构造 `OpenAI` client，httpx 走 SOCKS 缺 `socksio` 时直接 `ImportError`。这既让单测变成 13 errors，也会让 Task 14 真调 API 时立刻崩。README 的环境安装一节必须写上这条。
 
 **运行测试的标准命令**（每个 task 的验证步骤都用它）：
 
