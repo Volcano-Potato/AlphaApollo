@@ -8,10 +8,17 @@ GTS = ["738"]
 
 
 def cand(n: int, scope: str = "topic", topic: str = "number_theory") -> CandidateMemory:
+    # Evidence tags are exactly `p_<problem_idx>` -- the form `EvoHarnessArm.observe` actually
+    # writes (arms.py) and the form found in real skill files on disk. An earlier version of this
+    # helper used an invented `p_0001:symbolic_slip` shape that the system never produces, which
+    # silently made `source_problems` empty in every test using it.
+    # A general-scoped candidate carries two problems because that is what a general skill
+    # legitimately rests on; a topic-scoped one needs only its own.
+    evidence = [f"p_{n}"] if scope != "general" else [f"p_{n}", f"p_{n + 100}"]
     return CandidateMemory(trigger=f"Trigger {n}.", lesson=f"- Lesson {n}.",
                            failure_mode=f"Avoid {n}.", scope_hint=scope,
                            topic=None if scope == "general" else topic,
-                           evidence=[f"p_{n:04d}:symbolic_slip"])
+                           evidence=evidence)
 
 
 def add(n: int, scope: str = "topic") -> SkillEdit:
@@ -372,3 +379,93 @@ def test_adversarial_malformed_evidence_tags_do_not_break_logging(tmp_path):
 
     line = json.loads((tmp_path / "harness_log.jsonl").read_text().strip())
     assert line["source_problems"] == [3, 5]
+
+
+# --- the general layer must actually be cross-problem ------------------------------------------
+
+
+def _general_add(evidence, trigger="when counting pairs under a constraint"):
+    return SkillEdit(op="ADD", actor="general_curator", reason="looks broad",
+                     payload=CandidateMemory(trigger=trigger, lesson="- bound the search",
+                                             failure_mode="brute force", scope_hint="general",
+                                             topic=None, evidence=list(evidence)))
+
+
+def test_a_general_skill_backed_by_a_single_problem_is_refused(tmp_path):
+    """GENERAL_CURATOR_PROMPT already says "Each general skill must address a pattern seen in at
+    least 2 (2+) different problems" -- and nothing enforced it, so the model ignored it. The
+    first real 12-problem batch produced three general skills whose evidence was `[0]`, `[2]` and
+    `[3]`: three single-problem lessons filed as cross-task patterns.
+
+    Two things go wrong when that is allowed. The general layer stops being a *layer* -- it
+    becomes a second copy of the topic layer, and indeed two of those three skills were
+    verbatim duplicates of topic skills minted from the same candidate in the same batch. And
+    both copies then compete for the injection budget, so the same text can be injected twice.
+
+    Enforced in code rather than by asking the model again, for the same reason the token budget
+    is: an instruction the model may ignore is not a constraint.
+    """
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    [record] = store.apply([_general_add(["p_3"])], problem_idx=0, batch=0,
+                           question_texts=[], ground_truths=[])
+
+    assert record["accepted"] is False
+    assert record["reject_reason"] == "general_needs_two_problems"
+    assert store.all() == []
+
+
+def test_a_general_skill_seen_in_two_problems_is_accepted(tmp_path):
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    [record] = store.apply([_general_add(["p_3", "p_7"])], problem_idx=0, batch=0,
+                           question_texts=[], ground_truths=[])
+
+    assert record["accepted"] is True
+    assert len(store.all()) == 1
+
+
+def test_the_same_problem_named_twice_is_still_one_problem(tmp_path):
+    """Evidence is a list, and a candidate merged from two proposals of the same problem would
+    otherwise satisfy the rule without any cross-problem support at all."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    [record] = store.apply([_general_add(["p_3", "p_3"])], problem_idx=0, batch=0,
+                           question_texts=[], ground_truths=[])
+
+    assert record["accepted"] is False
+    assert record["reject_reason"] == "general_needs_two_problems"
+
+
+def test_a_topic_skill_from_one_problem_is_still_fine(tmp_path):
+    """A localized procedure learned from a single failure is exactly what the topic layer is
+    for; this rule must not leak across to it."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    edit = SkillEdit(op="ADD", actor="topic_curator", reason="localized",
+                     payload=CandidateMemory(trigger="t", lesson="- l", failure_mode="a",
+                                             scope_hint="topic", topic="number_theory",
+                                             evidence=["p_3"]))
+    [record] = store.apply([edit], problem_idx=0, batch=0, question_texts=[], ground_truths=[])
+    assert record["accepted"] is True
+
+
+def test_adversarial_merging_into_a_general_skill_is_not_blocked(tmp_path):
+    """MERGE adds a problem's evidence to a skill that already cleared the bar; re-checking the
+    incoming payload alone would reject every legitimate reinforcement."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    store.apply([_general_add(["p_1", "p_2"])], problem_idx=0, batch=0,
+                question_texts=[], ground_truths=[])
+    target = store.all()[0].id
+
+    merge = SkillEdit(op="MERGE", actor="general_curator", reason="same pattern again",
+                      skill_id=target,
+                      payload=CandidateMemory(trigger="t2", lesson="- l2", failure_mode="a2",
+                                              scope_hint="general", topic=None, evidence=["p_9"]))
+    [record] = store.apply([merge], problem_idx=0, batch=1, question_texts=[], ground_truths=[])
+    assert record["accepted"] is True
+    assert sorted(store.all()[0].evidence) == ["p_1", "p_2", "p_9"]
+
+
+def test_adversarial_a_general_add_with_no_evidence_at_all_is_refused(tmp_path):
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    [record] = store.apply([_general_add([])], problem_idx=0, batch=0,
+                           question_texts=[], ground_truths=[])
+    assert record["accepted"] is False
+    assert record["reject_reason"] == "general_needs_two_problems"

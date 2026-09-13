@@ -16,7 +16,7 @@ def seeded_store(tmp_path):
                       payload=CandidateMemory(trigger="when a count seems to explode",
                                               lesson="- bound the search space first",
                                               failure_mode="brute-forcing an infinite range",
-                                              scope_hint="general", topic=None, evidence=["p_3"])),
+                                              scope_hint="general", topic=None, evidence=["p_3", "p_5"])),
             SkillEdit(op="ADD", actor="topic_curator", reason="localized procedure",
                       payload=CandidateMemory(trigger="when solving a congruence",
                                               lesson="- check small residues numerically",

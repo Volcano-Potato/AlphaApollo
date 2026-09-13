@@ -35,12 +35,13 @@ of curator-issued ``SkillEdit``s into ADD/MERGE/REVISE/DELETE mutations under a 
 bound -- see ``apply()`` for the two-phase ordering this requires), plus per-problem skill
 *selection* (``select()``/``record_usage()``, budget-aware retrieval under ``Budget``).
 
-Selection is fully deterministic and makes zero model calls -- a deliberate deviation from the
-Evo-Harness paper (Appendix F uses Claude Sonnet 4.5 to select skills). Two reasons: (1) the
-three-arm experiment in Task C needs bit-identical selection given the same store state, so
-retrieval cannot be a source of sampling noise; (2) the mini-project's requirement to report
-"solver calls" separately from "cross-problem skill-management calls" is only an exact count, not
-an estimate, if selection itself never calls a model. See ``select()`` for the scoring formula.
+``select()`` here is the deterministic, model-free retriever this module originally shipped. It
+is **no longer the path the Evo-Harness arm uses**: selection now happens in ``selector.py`` as a
+model call, matching paper Appendix F ("For harness selection, we use Claude Sonnet 4.5 across all
+experiments to retrieve relevant skills from the current harness before task execution"). The
+deterministic version is kept because it is a useful, dependency-free reference implementation and
+several store-level tests exercise ranking without a model -- but a reader tracing what the
+experiment actually does should follow ``selector.select_skills``, not this method.
 """
 
 from __future__ import annotations
@@ -369,6 +370,24 @@ class SkillStore:
             self._write_skill(target)
             return {"skill_id": target.id, "accepted": True, "reject_reason": None,
                     "guard_note": guard_note}
+
+        # A general skill must rest on a pattern seen in at least two DIFFERENT problems.
+        # GENERAL_CURATOR_PROMPT already says so; nothing enforced it, and the model ignored it --
+        # the first real 12-problem batch produced three "general" skills whose evidence was
+        # p_0, p_2 and p_3 respectively: three single-problem lessons filed as cross-task
+        # patterns, two of them verbatim duplicates of topic skills minted from the same
+        # candidate in the same batch. Left unchecked the general layer stops being a layer and
+        # becomes a second copy of the topic layer, with both copies competing for the same
+        # injection budget.
+        #
+        # Enforced here rather than by asking the model more firmly, for exactly the reason the
+        # token budget is enforced in code: an instruction the model may ignore is not a
+        # constraint. Checked on ADD only -- a MERGE reinforces a skill that already cleared this
+        # bar, and re-checking the incoming payload alone would reject every legitimate
+        # reinforcement.
+        if edit.payload.scope_hint == "general" and len(set(_source_problems(edit))) < 2:
+            return {"skill_id": None, "accepted": False,
+                    "reject_reason": "general_needs_two_problems", "guard_note": guard_note}
 
         # ADD. `CandidateMemory.__post_init__` only validates that scope_hint is one of
         # {"general", "topic"}; it does NOT enforce the scope_hint=="topic" => topic-is-set
