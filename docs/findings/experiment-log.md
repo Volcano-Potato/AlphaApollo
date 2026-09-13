@@ -163,6 +163,75 @@ name 非空、content 非空、没超预算。**没有任何质量闸门。**
 
 ---
 
+## 2026-09-13 · 两篇原始工作的参数设定，以及我偏离了哪些
+
+Task C 要设参数，先把两边的原始值查清楚。**都取自实际文件，不是论文转述。**
+
+### A. AlphaApollo 侧（solver）—— `examples/configs/vllm_informal_math.yaml`
+
+| 参数 | 官方值 | 我的冒烟 | 性质 |
+|---|---|---|---|
+| `evolving_round` | **10** | 2 | ⚠️ 题内自进化被砍到 1/5 |
+| `verifier_env_num` | **5**（奇数）| 1 | ⚠️ **多数判决被关掉** |
+| `max_tokens` | **8192** | 2048 | ⚠️ AIME 推理链可能被截断 |
+| `verifier_max_workers` | 5 | 1 | 仅速度 |
+| `problem_max_workers` | 30 | 由 harness 的 `max_workers` 接管 | — |
+| `policy_env_num` | 1 | 1 | ✓ |
+| `max_steps` / `history_length` | 4 / 4 | 4 / 4 | ✓ |
+| `memory_type` | simple | simple | ✓ |
+| `python_code_timeout` | 300 | 60 | 轻微 |
+| temperature policy / verifier | 0.7 / 0.4 | 0.7 / 0.4 | ✓ |
+| 模型 | `qwen3_4b_inst` | `qwen3-8b` | 平台无 4B，已记录 |
+
+配置注释原文：*"make sure the number of verifier environment to be **odd** to ensure the **majority judgment**"*。用 1 个 verifier 等于关掉多数判决，而 **verifier 的判词正是 Reflect 的主要输入**。
+
+### B. Evo-Harness 侧 —— 论文 Appendix F vs 参考实现 `evo_harness/cl_bench.py`
+
+| 参数 | 论文 App.F | 参考实现默认值 | 我的 |
+|---|---|---|---|
+| batch size | 16 | **10** (`--batch-size`) | 8 |
+| batch workers | — | 4 (`--batch-workers`) | 4 |
+| max general skills | **5** | **10** (`--max-general-skills`) | 5 |
+| max skills per topic | **5** | 5 (`--max-skills-per-context`) | 5 |
+| selector 模型 | Claude Sonnet 4.5 | Sonnet 4.5 (`--selector-model`) | qwen3-32b |
+| curator 模型 | — | Sonnet 4.5 (`--curator-model`) | qwen3-8b |
+| propose(Reflect) 温度 / max_tokens | — | **0.3** / 1024 | **0.7** / 2048 |
+| topic curate 温度 / max_tokens | — | **0.0** / 2048 | **0.7** / 2048 |
+| general curate 温度 / max_tokens | — | **0.0** / 4096 | **0.7** / 2048 |
+| select 温度 / max_tokens | — | **0.0** / 1024 | 0.0 / 512 |
+| feedback level | — | 2（rubric count）| standard |
+| seed / 重复次数 | 42 / **结果取 3 次平均** | — | 1234 / 1 次 |
+| general curator 触发门槛 | — | **本批失败数 ≥ 3** | 无 |
+| 注入预算 | — | **"Select FEWER skills (0-5)"，纯提示词，无 token 上限** | b=6 / general≤3 / topic≤4 / **800 token，代码强制** |
+
+论文 App.F 说 general 和 per-topic 都是 5，而参考实现的 `cl_bench` 默认 general=10 —— 两者不一致，可能是 benchmark 相关。
+
+### C. 我的偏离，分成两类
+
+**是 bug，该改：**
+
+1. **管理调用全跑在 temperature 0.7** —— `mgmt_agent = Agent(cfg_bundle["policy_model_cfg"])` 直接继承了 policy 的温度。参考实现 curate 用 **0.0**、propose 用 **0.3**。0.7 下做 curation 意味着同样的候选每次给出不同决策，直接损害 Task C 的可比性。
+2. `verifier_env_num=1` 关掉了多数判决 —— 这不是"简化"，是改变了 baseline 的行为。
+3. `max_tokens=2048` vs 官方 8192 —— AIME 推理链很长，**这可能才是解题率卡在 2–3/12 的原因**，而我一直归因于模型能力。
+
+**是刻意偏离，要在 README 声明：**
+
+| 偏离 | 理由 |
+|---|---|
+| batch 8（论文 16 / 参考 10）| 149 题在 16 下只有约 9 个更新点，看不出增长趋势 |
+| selector/annotator 用 qwen3-32b（论文 Sonnet 4.5）| 手头没有 Sonnet；32b 是可得的最接近选择 |
+| 注入预算**代码强制** + token 上限（参考实现纯提示词、无 token 上限）| 作业 Task A 明确要求"注入内容受可配置的数量或 token budget 限制" |
+| 保留 general 技能的 evidence 链（参考实现没有）| 作业要求"记录每个问题产生了哪些候选更新" |
+| general 要求跨 2 题（参考实现是 3，且纯提示词）| 详见上文 general 层三轮演变那条 |
+
+### D. 尚未决定
+
+`evolving_round` 10 vs 2、`max_tokens` 8192 vs 2048、`verifier_env_num` 5 vs 1 三项叠加，单题成本可能是现在的 5–10 倍，149 题 × 3 arm 会很贵。
+
+**在跑一轮官方参数的诊断之前不定。** 现在的 2–3/12 解题率究竟是模型上限还是我配出来的地板，没有这个数就只能猜。
+
+---
+
 ## 2026-09-13 · 空洞技能的源头不是 general curator（一次被自己污染的实验）
 
 承接上一条的开放问题：空洞技能是方法的退化倾向，还是 qwen3-8b 能力不足？
