@@ -376,14 +376,13 @@ class EvoHarnessArm(CrossProblemArm):
         # 1. Reflect -- only on failures (paper eq. 6). Each candidate remembers which topic it
         # came from, for the grouping in step 2.
         candidates: list[CandidateMemory] = []
-        candidate_topics: list[str] = []
+
+        existing_topics = sorted({s.topic for s in self._frozen_snapshot if s.level == "topic" and s.topic})
         for problem, result in failed:
-            topic = problem.get("topic", "")
             try:
-                related = _select_from_snapshot(self._frozen_snapshot, problem.get("question", ""),
-                                                 topic, self.store.budget)
+                related = self._selections.get(problem.get("problem_idx"), [])
                 context = build_reflect_context(
-                    topic=topic,
+                    existing_topics=existing_topics,
                     problem_shape=problem.get("problem_shape", ""),
                     final_answer_given=str(result.get("final_answer_given", "")),
                     outcome="failed",
@@ -404,16 +403,17 @@ class EvoHarnessArm(CrossProblemArm):
             # constraint in the module docstring and the guard's own evidence convention.
             candidate.evidence = list(candidate.evidence) + [f"p_{problem.get('problem_idx')}"]
             candidates.append(candidate)
-            candidate_topics.append(topic)
 
         if not candidates:
             return []
 
-        # 2. Group by topic -> TopicCurator (one call per topic represented this batch).
+        # 2. Group by the topic the MODEL named (paper Appendix E.1), not by any dataset label --
+        # a candidate that named no topic is cross-task only and has no bucket to be curated in.
         edits: list[SkillEdit] = []
         by_topic: dict[str, list[CandidateMemory]] = {}
-        for cand, topic in zip(candidates, candidate_topics):
-            by_topic.setdefault(topic, []).append(cand)
+        for cand in candidates:
+            if cand.topic:
+                by_topic.setdefault(cand.topic, []).append(cand)
 
         # `self.store.all()` (live), not `self._frozen_snapshot`, is deliberate and safe here:
         # nothing between `begin_batch()` and the `store.apply()` call below ever mutates a

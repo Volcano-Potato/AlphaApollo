@@ -19,7 +19,8 @@ FAILED = {"pass_final": 0, "pass1_round0": 0, "final_answer_given": "412",
 
 PASSED = {**FAILED, "pass_final": 1, "pass1_round0": 1}
 
-REFLECTION = """SCOPE: topic
+REFLECTION = """TOPIC: number theory
+SCOPE: topic
 TRIGGER: Counting integers under congruence constraints.
 LESSON:
 - Enumerate a small range in python before generalizing.

@@ -77,7 +77,6 @@ _THINK_UNCLOSED = re.compile(r"<think>.*\Z", re.IGNORECASE | re.DOTALL)
 REFLECT_PROMPT = """You just failed a competition mathematics problem. Distill ONE reusable \
 lesson that would help you on FUTURE, DIFFERENT problems.
 
-Topic: {topic}
 Problem shape: {problem_shape}
 Answer you produced: {final_answer_given}
 Outcome: {outcome}
@@ -89,10 +88,14 @@ Your reasoning (excerpt):
 ## Related skills already in your harness
 {related_skills}
 
+## Topics already in your harness
+{existing_topics}
+
 Write in English. Output EXACTLY this format and nothing else:
 
 ACTION: NEW | ENHANCE | NONE
 TARGET: <existing skill id>          (only when ACTION is ENHANCE)
+TOPIC: <a broad topic name, lowercase, 1-3 words>
 SCOPE: general | topic
 TRIGGER: <one sentence naming the situation where this applies>
 LESSON:
@@ -108,9 +111,42 @@ Filter aggressively. Output ACTION: NONE rather than proposing:
 Other rules:
 - If a listed existing skill already covers this lesson, use ACTION: ENHANCE with its id.
 - Describe the METHOD, never the problem statement or its numeric answer.
+- TOPIC: reuse one of the topics listed above whenever it fits; only name a new one when none do.
 - SCOPE: general only if it would help on a DIFFERENT mathematical topic."""
 
 _NO_RELATED_SKILLS = "(none yet)"
+_NO_EXISTING_TOPICS = "(none yet -- you are naming the first one)"
+
+# A topic name is a bucket key, so two spellings of the same idea are two buckets. The harness
+# caps skills per topic, so unchecked fragmentation ("Number Theory" / "number theory" /
+# "number-theory") ends with every bucket holding one skill and no layer at all. Canonicalisation
+# is intentionally shallow -- case, separators, surrounding punctuation and a trailing "problems"
+# -- because anything cleverer would start merging topics the model meant to keep apart. Real
+# synonym collapsing is the prompt's job: it is shown the existing topic names and told to reuse
+# one where it fits.
+_TOPIC_RE = re.compile(r"^[ \t]*TOPIC[ \t]*:[ \t]*(.+)$", re.IGNORECASE | re.MULTILINE)
+_TOPIC_STRIP = re.compile(r"[^a-z0-9]+")
+_TOPIC_SUFFIX = re.compile(r"_(problems?|questions?|tasks?)$")
+_MAX_TOPIC_WORDS = 3
+
+
+def normalise_topic(raw: str | None) -> str | None:
+    """Canonicalise a model-chosen topic name into a stable bucket key, or ``None`` if unusable.
+
+    Names longer than three words are rejected rather than truncated: past that length the model
+    has written a description of this one problem ("counting lattice paths under a divisibility
+    constraint") instead of a topic, and truncating it would produce a bucket key that looks
+    legitimate while still matching nothing else.
+    """
+    if raw is None:
+        return None
+    name = _TOPIC_STRIP.sub("_", str(raw).strip().lower()).strip("_")
+    name = _TOPIC_SUFFIX.sub("", name)
+    if not name or name in {"none", "n_a", "na", "unknown", "general"}:
+        return None
+    if len(name.split("_")) > _MAX_TOPIC_WORDS:
+        return None
+    return name
 
 # Field-label regexes. Leading/trailing whitespace around a label and its colon is restricted to
 # spaces/tabs (`[ \t]*`), never the full `\s*` class -- `\s` also matches newlines, and a leading
@@ -166,16 +202,41 @@ def _render_related(related_skills: list[Skill]) -> str:
     return "\n".join(f"- [{skill.id}] {skill.trigger}" for skill in related_skills)
 
 
-def build_reflect_context(*, topic: str, problem_shape: str, final_answer_given: str, outcome: str, verifier_feedback: str, tool_errors: str, reasoning_excerpt: str, round_count: int, related_skills: list[Skill]) -> dict:
+def _render_topics(existing_topics: list[str]) -> str:
+    seen: list[str] = []
+    for topic in existing_topics:
+        name = normalise_topic(topic)
+        if name and name not in seen:
+            seen.append(name)
+    if not seen:
+        return _NO_EXISTING_TOPICS
+    return "\n".join(f"- {name}" for name in sorted(seen))
+
+
+def build_reflect_context(*, existing_topics: list[str], problem_shape: str, final_answer_given: str, outcome: str, verifier_feedback: str, tool_errors: str, reasoning_excerpt: str, round_count: int, related_skills: list[Skill]) -> dict:
     """Assemble the whitelisted materials Reflect is allowed to see, as a plain dict ready for
     ``reflect()``. Every keyword here is listed explicitly (no ``**kwargs``, no dict parameter) --
     see the module docstring for why that is the actual anti-leakage mechanism, not just style.
 
     ``related_skills`` mirrors paper Appendix E.1's proposal-step input "related existing
-    skills": pass exactly the skills ``store.select()`` already chose for this problem. Doing so
-    costs nothing extra (they are already in hand) and, per the paper, keeps Reflect from
-    proposing lessons the harness already holds under a different id -- without them the curator
-    spends its fixed budget on near-duplicates instead of genuinely new coverage.
+    skills": pass exactly the skills the selector already chose for this problem. Doing so costs
+    nothing extra (they are already in hand) and, per the paper, keeps Reflect from proposing
+    lessons the harness already holds under a different id -- without them the curator spends its
+    fixed budget on near-duplicates instead of genuinely new coverage.
+
+    ``existing_topics`` is NOT the current problem's topic -- there is no such input. Paper
+    Appendix E.1 lists the proposal step's inputs as "evaluation result, verifier details or
+    rubric feedback, trajectory signals, compressed trajectory, and related existing skills", and
+    instructs the model to *"Propose a reusable skill. Choose a broad topic..."*. The topic is
+    therefore something the model names on the way out, from what it just experienced -- not a
+    dataset label handed in on the way. An earlier version of this module had that backwards,
+    which manufactured a dependency on per-problem topic annotations that the method does not
+    actually have.
+
+    The existing topic names are passed purely so the model can *reuse* one rather than coining a
+    synonym. Without that, free-form naming fragments the buckets ("number theory" / "modular
+    arithmetic" / "divisibility"), and since the harness caps skills per topic, every bucket ends
+    up holding one skill and the topic layer stops being a layer.
 
     ``verifier_feedback`` and ``tool_errors`` are passed through ``sanitize_feedback()`` here, at
     context-build time, so that every downstream consumer of this dict (today: ``reflect()``; any
@@ -183,7 +244,7 @@ def build_reflect_context(*, topic: str, problem_shape: str, final_answer_given:
     remember to scrub it again.
     """
     return {
-        "topic": topic,
+        "existing_topics": _render_topics(existing_topics),
         "problem_shape": problem_shape,
         "final_answer_given": final_answer_given,
         "outcome": outcome,
@@ -220,7 +281,7 @@ def reflect(agent, context: dict, *, feedback_level: str = "standard") -> Candid
     not in the requested format" (see module docstring).
     """
     prompt = REFLECT_PROMPT.format(
-        topic=context["topic"],
+        existing_topics=context["existing_topics"],
         problem_shape=context["problem_shape"],
         final_answer_given=context["final_answer_given"],
         outcome=context["outcome"],
@@ -232,13 +293,9 @@ def reflect(agent, context: dict, *, feedback_level: str = "standard") -> Candid
     with role_scope("reflect"):
         reply = agent.get_action_from_gpt(prompt)
 
-    candidate = parse_reflection(reply)
-    if candidate is not None and candidate.scope_hint == "topic":
-        # parse_reflection() only ever sees the model's raw text, which never carries the
-        # problem's topic string -- that comes from this call's own context, not the model, so
-        # it is backfilled here rather than guessed at parse time.
-        candidate.topic = context["topic"]
-    return candidate
+    # No topic backfill: the model names the topic itself (paper Appendix E.1), so
+    # `parse_reflection` reads it straight off the reply.
+    return parse_reflection(reply)
 
 
 def parse_reflection(text: str) -> CandidateMemory | None:
@@ -317,12 +374,27 @@ def parse_reflection(text: str) -> CandidateMemory | None:
         if target_match is not None:
             target_id = target_match.group(1).strip()
 
+    # The model names its own topic (paper Appendix E.1: "Choose a broad topic"). A topic-scoped
+    # candidate with no usable topic name has no bucket to live in, so it is rejected outright
+    # rather than filed under a placeholder that matches nothing.
+    #
+    # The name is kept even when SCOPE is general. Algorithm 1 feeds the *same* proposal pool to
+    # CompileTaskType and to the cross-task compile step, so a proposal that arose while doing
+    # number theory still belongs in that topic's curator call even if the model judged the
+    # lesson itself to be cross-task. `evolver._bind_payloads` is what finally nulls the topic
+    # for anything the GeneralCurator accepts, since the store rejects a general skill carrying
+    # a topic.
+    topic_match = _TOPIC_RE.search(text)
+    topic = normalise_topic(topic_match.group(1)) if topic_match else None
+    if scope == "topic" and not topic:
+        return None
+
     return CandidateMemory(
         trigger=trigger,
         lesson=lesson,
         failure_mode=failure_mode,
         scope_hint=scope,
-        topic=None,
+        topic=topic,
         action_hint=action,
         target_id=target_id,
     )

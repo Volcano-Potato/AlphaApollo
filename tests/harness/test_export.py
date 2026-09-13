@@ -153,7 +153,7 @@ def test_provenance_survives_the_whole_chain_from_arm_to_export(tmp_path):
     """
     from alphaapollo.core.harness.arms import EvoHarnessArm
 
-    reflection = ("SCOPE: topic\nTRIGGER: Counting under congruence constraints.\n"
+    reflection = ("TOPIC: number theory\nSCOPE: topic\nTRIGGER: Counting under congruence constraints.\n"
                   "LESSON:\n- Enumerate a small range before generalizing.\n"
                   "AVOID: Extrapolating without numeric verification.")
 
