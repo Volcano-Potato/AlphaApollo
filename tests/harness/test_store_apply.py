@@ -469,3 +469,85 @@ def test_adversarial_a_general_add_with_no_evidence_at_all_is_refused(tmp_path):
                            question_texts=[], ground_truths=[])
     assert record["accepted"] is False
     assert record["reject_reason"] == "general_needs_two_problems"
+
+
+# --- a curator may only edit its own layer ------------------------------------------------------
+
+
+def test_a_general_curator_cannot_rewrite_a_topic_skill(tmp_path):
+    """Observed in a real run: GeneralCurator is shown only general skills, hallucinated the id of
+    a topic skill, and `_apply_one` happily rewrote it -- because it looked the target up by id
+    and never checked which layer it belonged to. Both curators then accumulated evidence and
+    content into the same skill, so the two layers stopped being independent and the
+    General-Only/Topic-Only ablation the paper reports would have been measuring one tangled
+    layer.
+
+    `_bind_payloads` already forces every payload's scope_hint to the issuing curator's own layer,
+    so the payload is a reliable statement of who issued the edit.
+    """
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    apply(store, [add(1, "topic")])
+    topic_id = store.all()[0].id
+
+    cross_layer = SkillEdit(op="MERGE", actor="general_curator", reason="hallucinated id",
+                            skill_id=topic_id,
+                            payload=CandidateMemory(trigger="OVERWRITTEN", lesson="- x",
+                                                    failure_mode="y", scope_hint="general",
+                                                    topic=None, evidence=["p_9", "p_10"]))
+    [record] = apply(store, [cross_layer])
+
+    assert record["accepted"] is False
+    assert record["reject_reason"] == "wrong_layer"
+    assert store.all()[0].trigger != "OVERWRITTEN", "the topic skill must be untouched"
+
+
+def test_a_topic_curator_cannot_rewrite_a_general_skill(tmp_path):
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    apply(store, [add(2, "general")])
+    general_id = store.all()[0].id
+
+    cross_layer = SkillEdit(op="REVISE", actor="topic_curator", reason="hallucinated id",
+                            skill_id=general_id,
+                            payload=CandidateMemory(trigger="OVERWRITTEN", lesson="- x",
+                                                    failure_mode="y", scope_hint="topic",
+                                                    topic="number_theory", evidence=["p_9"]))
+    [record] = apply(store, [cross_layer])
+
+    assert record["accepted"] is False
+    assert record["reject_reason"] == "wrong_layer"
+    assert store.all()[0].trigger != "OVERWRITTEN"
+
+
+def test_an_in_layer_merge_is_unaffected(tmp_path):
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    apply(store, [add(1, "topic")])
+    topic_id = store.all()[0].id
+
+    same_layer = SkillEdit(op="MERGE", actor="topic_curator", reason="same pattern",
+                           skill_id=topic_id,
+                           payload=CandidateMemory(trigger="REFINED", lesson="- x",
+                                                   failure_mode="y", scope_hint="topic",
+                                                   topic="number_theory", evidence=["p_9"]))
+    [record] = apply(store, [same_layer])
+
+    assert record["accepted"] is True
+    assert store.all()[0].trigger == "REFINED"
+
+
+def test_adversarial_a_topic_curator_cannot_hop_between_topics(tmp_path):
+    """Same failure one level down: both skills are topic-scoped, but a curator invoked for
+    `algebra` must not rewrite the `number_theory` bucket's skill."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    apply(store, [add(1, "topic")])  # topic=number_theory
+    victim = store.all()[0].id
+
+    other_topic = SkillEdit(op="MERGE", actor="topic_curator", reason="wrong bucket",
+                            skill_id=victim,
+                            payload=CandidateMemory(trigger="OVERWRITTEN", lesson="- x",
+                                                    failure_mode="y", scope_hint="topic",
+                                                    topic="algebra", evidence=["p_9"]))
+    [record] = apply(store, [other_topic])
+
+    assert record["accepted"] is False
+    assert record["reject_reason"] == "wrong_layer"
+    assert store.all()[0].trigger != "OVERWRITTEN"

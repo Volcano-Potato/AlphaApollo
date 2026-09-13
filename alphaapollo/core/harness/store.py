@@ -362,6 +362,21 @@ class SkillStore:
             if target is None:
                 return {"skill_id": edit.skill_id, "accepted": False,
                         "reject_reason": "unknown_skill_id", "guard_note": None}
+            # A curator may only edit skills in its own layer -- and, for the topic layer, its
+            # own topic bucket. Observed in a real run: GeneralCurator, which is shown only
+            # general skills, hallucinated a topic skill's id and this method rewrote it, because
+            # it looked the target up by id and never checked what layer the target was in. Both
+            # curators then accumulated content and evidence into the same skill, so the two
+            # layers stopped being independent -- which would silently invalidate the
+            # General-Only / Topic-Only ablation the paper reports.
+            #
+            # `_bind_payloads` forces every payload's scope_hint/topic to the issuing curator's
+            # own layer, so the payload is a reliable statement of who issued this edit.
+            if target.level != edit.payload.scope_hint or (
+                target.level == "topic" and target.topic != edit.payload.topic
+            ):
+                return {"skill_id": edit.skill_id, "accepted": False,
+                        "reject_reason": "wrong_layer", "guard_note": guard_note}
             target.trigger = edit.payload.trigger
             target.lesson = edit.payload.lesson
             target.failure_mode = edit.payload.failure_mode
