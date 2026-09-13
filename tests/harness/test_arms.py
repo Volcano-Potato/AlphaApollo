@@ -153,8 +153,12 @@ def test_mixed_batch_evo_only_reflects_on_the_failure(arms):
     results = arm.end_batch(0)
 
     assert len(arm.agent.prompts) == 3, "expected Reflect + TopicCurator + GeneralCurator, not more"
-    assert len(results) == 1 and results[0]["accepted"] is True
+    accepted = [r for r in results if r["accepted"]]
+    assert len(accepted) == 1
     assert len(arm.store.all()) == 1
+    # The GeneralCurator answered NO_PATTERNS, so the candidate it was shown is recorded as a
+    # rejection rather than silently dropped -- the provenance guarantee in _bind_payloads.
+    assert [r["reject_reason"] for r in results if not r["accepted"]] == ["skipped"]
 
 
 def test_mixed_batch_raw_experience_stores_both_outcomes(arms):

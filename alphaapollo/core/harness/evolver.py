@@ -367,7 +367,34 @@ def _bind_payloads(
     ``topic`` regardless of what the source candidate or the model's own text said -- the model
     is never trusted on which layer a skill belongs to; that is the calling curator's own layer,
     known only here, not by the parser.
+
+    This function is also the last point at which a candidate's *provenance* is still knowable,
+    so it owns all three provenance guarantees (each one closing a hole found in the first real
+    end-to-end run):
+
+    1. Every bound payload keeps the source candidate's ``evidence`` (its ``p_<problem_idx>``
+       tags), so ``store.apply`` can record which problem proposed what.
+    2. ``REVISE`` has no candidate ordinal to resolve -- it is the curator reacting to the pool
+       as a whole -- and used to be bound with ``evidence=[]``, making it untraceable to any
+       problem. It now inherits the union of the whole pool's evidence. That is genuinely what
+       the curator saw; naming one candidate would be a more precise lie.
+    3. A candidate the curator simply never mentions produced no edit at all, hence no log line,
+       contradicting ``store``'s promise that ``harness_log.jsonl`` holds every proposed-but-
+       rejected candidate. Unreferenced candidates are now emitted as synthetic ``SKIP`` edits so
+       they travel the existing rejection path, tagged with a reason that distinguishes them
+       from a ``SKIP`` the curator actually asked for.
     """
+    pool_evidence: list[str] = []
+    for candidate in candidates:
+        for tag in candidate.evidence:
+            if tag not in pool_evidence:
+                pool_evidence.append(tag)
+
+    # 1-based ordinals the curator actually referred to. An edit dropped below for an
+    # unresolvable ordinal deliberately does NOT mark anything as referenced, so the candidates
+    # it failed to name are still accounted for.
+    referenced: set[int] = set()
+
     bound: list[SkillEdit] = []
     for edit in edits:
         payload = edit.payload
@@ -385,6 +412,7 @@ def _bind_payloads(
                 scope_hint=level, topic=topic, evidence=list(source.evidence),
                 action_hint=source.action_hint, target_id=source.target_id,
             )
+            referenced.add(payload.index)
             bound.append(SkillEdit(op=edit.op, actor=edit.actor, reason=edit.reason,
                                     skill_id=edit.skill_id, payload=new_payload))
             continue
@@ -397,15 +425,19 @@ def _bind_payloads(
                 trigger=payload.trigger, lesson=payload.lesson, failure_mode=payload.avoid,
                 scope_hint=level, topic=topic, evidence=list(source.evidence),
             )
+            referenced.add(payload.index)
             bound.append(SkillEdit(op=edit.op, actor=edit.actor, reason=edit.reason,
                                     skill_id=edit.skill_id, payload=new_payload))
             continue
 
         if isinstance(payload, _PayloadRef):
-            # REVISE: no candidate ordinal to resolve, just the new text.
+            # REVISE: no candidate ordinal to resolve, just the new text. Provenance is the
+            # whole pool the curator was shown -- see guarantee 2 in the docstring. A REVISE
+            # does not mark any single candidate as referenced, so a candidate that only ever
+            # appeared in this pool is still emitted as an unreferenced SKIP below.
             new_payload = CandidateMemory(
                 trigger=payload.trigger, lesson=payload.lesson, failure_mode=payload.avoid,
-                scope_hint=level, topic=topic, evidence=[],
+                scope_hint=level, topic=topic, evidence=list(pool_evidence),
             )
             bound.append(SkillEdit(op=edit.op, actor=edit.actor, reason=edit.reason,
                                     skill_id=edit.skill_id, payload=new_payload))
@@ -416,7 +448,37 @@ def _bind_payloads(
         # a matching branch here.
         continue
 
+    # Guarantee 3: account for every candidate the curator did not act on, so no proposal
+    # disappears without a log line naming the problem that produced it.
+    for ordinal, candidate in enumerate(candidates, start=1):
+        if ordinal in referenced:
+            continue
+        bound.append(SkillEdit(
+            op="SKIP", actor=actor_of(edits, level),
+            reason="not referenced by the curator's reply",
+            skill_id=None,
+            payload=CandidateMemory(
+                trigger=candidate.trigger, lesson=candidate.lesson,
+                failure_mode=candidate.failure_mode, scope_hint=level, topic=topic,
+                evidence=list(candidate.evidence), action_hint=candidate.action_hint,
+                target_id=candidate.target_id,
+            ),
+        ))
+
     return bound
+
+
+def actor_of(edits: list[SkillEdit], level: str) -> str:
+    """Which curator to attribute a synthetic SKIP to.
+
+    Taken from the edits the curator did produce, so the label matches the real call. When the
+    reply produced no parseable edit at all there is nothing to copy, so it falls back to the
+    layer's conventional role name -- the same strings ``accounting.MGMT_ROLES`` uses.
+    """
+    for edit in edits:
+        if edit.actor:
+            return edit.actor
+    return "general_curator" if level == "general" else "topic_curator"
 
 
 def _render_existing(existing: list[Skill]) -> str:

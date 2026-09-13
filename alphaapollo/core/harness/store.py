@@ -18,8 +18,12 @@ This is the infrastructure half of Task A: a skill lives on disk under ``<root>/
 / ``skill_from_markdown``) plus two append-only JSONL logs that are deliberately kept separate:
 
 - ``harness_log.jsonl`` -- the harness's own edit history: every add/merge/revise/delete, and
-  every candidate that was proposed but *rejected*. This is what lets the exported harness be
-  audited later ("what changed, and why").
+  every candidate that was proposed but *rejected*, including one the curator neither accepted
+  nor explicitly skipped but simply never mentioned (``evolver._bind_payloads`` turns those into
+  synthetic SKIPs precisely so this promise holds). Each line also carries ``source_problems``,
+  the problems whose failures produced that candidate -- ``problem_idx`` on these lines is the
+  *batch* index and cannot name them. This is what lets the exported harness be audited later
+  ("what changed, why, and on whose evidence").
 - ``selection_log.jsonl`` -- the per-problem selection record: which skills were injected into
   which problem's context, at what token cost, alongside the resulting pass/fail signal. This is
   a different axis (retrieval, not editing) and must not be interleaved with the edit history --
@@ -85,6 +89,38 @@ _MAX_SLUG_WORDS = 8
 # word-overlap heuristic (not a real IDF/BM25 implementation) so that selection needs neither a
 # model call nor a tokenizer download -- see the module docstring addendum on `select()` below
 # for why zero-model-call selection is a hard requirement here, not just an optimization.
+# Provenance tags written by `EvoHarnessArm.observe` onto every candidate's `evidence` list, in
+# the form `p_<problem_idx>`. Anchored at both ends so a free-form note the guard may also have
+# appended to `evidence` cannot be mistaken for a problem reference.
+_EVIDENCE_TAG = re.compile(r"^p_(\d+)$")
+
+
+def _source_problems(edit: SkillEdit) -> list[int]:
+    """Which problems' failures produced the candidate behind ``edit``.
+
+    A ``harness_log.jsonl`` line's ``problem_idx`` is the *batch* index, not a problem's: a single
+    ``apply()`` call carries edits pooled from every failed problem in the batch, so one value
+    cannot name them. Without this field the log cannot answer "what did problem N propose, and
+    was it accepted?" -- something the assignment requires, and something that matters most for
+    *rejected* candidates, which exist nowhere else once the call returns (an accepted one keeps
+    its evidence in the skill file).
+
+    Returns an empty list for edits with no candidate behind them (``DELETE`` is harness
+    maintenance, not a response to a proposal), rather than omitting the key -- every log line
+    keeps the same shape for downstream analysis.
+    """
+    payload = getattr(edit, "payload", None)
+    evidence = getattr(payload, "evidence", None) or []
+    found: list[int] = []
+    for tag in evidence:
+        match = _EVIDENCE_TAG.match(str(tag))
+        if match:
+            idx = int(match.group(1))
+            if idx not in found:
+                found.append(idx)
+    return sorted(found)
+
+
 _SELECT_WORD = re.compile(r"[A-Za-z']+")
 _STOPWORDS = frozenset(
     "a an and are as at be by for from has have in into is it its of on or that the "
@@ -288,7 +324,8 @@ class SkillStore:
                 record = {"skill_id": edit.skill_id, "accepted": False,
                           "reject_reason": f"internal_error:{type(exc).__name__}", "guard_note": None}
             record.update(problem_idx=problem_idx, batch=batch, op=edit.op,
-                          actor=edit.actor, reason=edit.reason)
+                          actor=edit.actor, reason=edit.reason,
+                          source_problems=_source_problems(edit))
             self.log_event(**record)
             results.append(record)
         return results

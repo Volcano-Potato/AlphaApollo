@@ -315,3 +315,60 @@ def test_adversarial_accepted_numeric_coincidence_guard_note_reaches_the_log(tmp
     logged = json.loads((tmp_path / "harness_log.jsonl").read_text().strip())
     assert logged["guard_note"] == "numeric_coincidence"
     assert len(store.all()) == 1
+
+
+def test_every_log_line_names_the_problems_that_produced_the_candidate(tmp_path):
+    """`problem_idx` on a harness_log line is the BATCH index, not a problem's: apply() takes one
+    value per call while its edits are pooled from every failed problem in the batch (see
+    arms.py). So without this field the log cannot answer "what did problem N propose, and was it
+    accepted?" -- which the assignment requires. Provenance rides in on the candidate's evidence
+    tags, which _bind_payloads guarantees are present on every candidate-derived edit.
+    """
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    edit = SkillEdit(op="ADD", actor="topic_curator", reason="useful",
+                     payload=CandidateMemory(trigger="t", lesson="l", failure_mode="a",
+                                             scope_hint="topic", topic="algebra",
+                                             evidence=["p_3", "p_7"]))
+    store.apply([edit], problem_idx=0, batch=0, question_texts=[], ground_truths=[])
+
+    line = json.loads((tmp_path / "harness_log.jsonl").read_text().strip())
+    assert line["source_problems"] == [3, 7]
+
+
+def test_a_rejected_candidate_is_still_traceable_to_its_problem(tmp_path):
+    """The rejection path is the one that matters most here -- an accepted skill keeps its
+    evidence in the skill file, a rejected one exists nowhere but this log line."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    edit = SkillEdit(op="SKIP", actor="general_curator", reason="not referenced by the curator's reply",
+                     payload=CandidateMemory(trigger="t", lesson="l", failure_mode="a",
+                                             scope_hint="general", topic=None, evidence=["p_11"]))
+    store.apply([edit], problem_idx=0, batch=0, question_texts=[], ground_truths=[])
+
+    line = json.loads((tmp_path / "harness_log.jsonl").read_text().strip())
+    assert line["accepted"] is False
+    assert line["source_problems"] == [11]
+
+
+def test_adversarial_an_edit_with_no_candidate_payload_logs_an_empty_provenance(tmp_path):
+    """DELETE is harness maintenance, not a response to one candidate; it must log an empty list
+    rather than omitting the key, so every line has the same shape for downstream analysis."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    store.apply([SkillEdit(op="DELETE", actor="general_curator", reason="stale", skill_id="sk_0001")],
+                problem_idx=0, batch=0, question_texts=[], ground_truths=[])
+
+    line = json.loads((tmp_path / "harness_log.jsonl").read_text().strip())
+    assert line["source_problems"] == []
+
+
+def test_adversarial_malformed_evidence_tags_do_not_break_logging(tmp_path):
+    """Evidence is also where the guard records non-provenance notes; anything that is not a
+    `p_<int>` tag must be ignored rather than crashing the audit write."""
+    store = SkillStore(tmp_path, caps=Caps(general=5, per_topic=5))
+    edit = SkillEdit(op="ADD", actor="topic_curator", reason="useful",
+                     payload=CandidateMemory(trigger="t", lesson="l", failure_mode="a",
+                                             scope_hint="topic", topic="algebra",
+                                             evidence=["p_3", "p_notanumber", "freeform note", "p_5"]))
+    store.apply([edit], problem_idx=0, batch=0, question_texts=[], ground_truths=[])
+
+    line = json.loads((tmp_path / "harness_log.jsonl").read_text().strip())
+    assert line["source_problems"] == [3, 5]

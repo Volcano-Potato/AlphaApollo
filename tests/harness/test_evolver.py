@@ -1,4 +1,4 @@
-from alphaapollo.core.harness.evolver import GeneralCurator, TopicCurator, parse_curator_output
+from alphaapollo.core.harness.evolver import GeneralCurator, TopicCurator, _bind_payloads, parse_curator_output
 from alphaapollo.core.harness.schema import CandidateMemory, Skill
 from alphaapollo.core.harness.store import Caps
 
@@ -231,28 +231,40 @@ def test_add_with_zero_candidate_number_is_out_of_range_and_dropped():
     agent = StubAgent("ADD: 0\nREASON: bogus index")
     edits = TopicCurator().curate(agent, existing=[], candidates=[cand(1)],
                                   topic="number_theory", caps=Caps())
-    assert edits == []
+    # The malformed ADD is dropped, and the candidate it failed to name is accounted for as a
+    # recorded rejection rather than vanishing -- see the candidate-provenance tests below.
+    assert [e.op for e in edits] == ["SKIP"]
+    assert not any(e.op == "ADD" for e in edits)
 
 
 def test_add_with_negative_candidate_number_is_dropped():
     agent = StubAgent("ADD: -1\nREASON: bogus index")
     edits = TopicCurator().curate(agent, existing=[], candidates=[cand(1)],
                                   topic="number_theory", caps=Caps())
-    assert edits == []
+    # The malformed ADD is dropped, and the candidate it failed to name is accounted for as a
+    # recorded rejection rather than vanishing -- see the candidate-provenance tests below.
+    assert [e.op for e in edits] == ["SKIP"]
+    assert not any(e.op == "ADD" for e in edits)
 
 
 def test_add_with_non_numeric_candidate_token_is_dropped():
     agent = StubAgent("ADD: one\nREASON: bogus index")
     edits = TopicCurator().curate(agent, existing=[], candidates=[cand(1)],
                                   topic="number_theory", caps=Caps())
-    assert edits == []
+    # The malformed ADD is dropped, and the candidate it failed to name is accounted for as a
+    # recorded rejection rather than vanishing -- see the candidate-provenance tests below.
+    assert [e.op for e in edits] == ["SKIP"]
+    assert not any(e.op == "ADD" for e in edits)
 
 
 def test_add_with_out_of_range_candidate_number_is_dropped_not_half_built():
     agent = StubAgent("ADD: 5\nREASON: only one candidate exists")
     edits = TopicCurator().curate(agent, existing=[], candidates=[cand(1)],
                                   topic="number_theory", caps=Caps())
-    assert edits == []
+    # The malformed ADD is dropped, and the candidate it failed to name is accounted for as a
+    # recorded rejection rather than vanishing -- see the candidate-provenance tests below.
+    assert [e.op for e in edits] == ["SKIP"]
+    assert not any(e.op == "ADD" for e in edits)
 
 
 def test_merge_missing_one_of_the_three_payload_sections_is_dropped():
@@ -279,3 +291,95 @@ def test_reason_written_in_chinese_is_still_captured():
     edits = parse_curator_output(text, actor="topic_curator")
     assert len(edits) == 1 and edits[0].op == "ADD"
     assert "独立" in edits[0].reason
+
+
+# --- candidate provenance --------------------------------------------------------------------
+#
+# The assignment requires every problem's candidate updates and accept/reject decisions to be
+# recorded. The first real end-to-end run showed three ways a candidate's source problem got
+# lost on the way to harness_log.jsonl.
+
+
+def _cand(text, evidence):
+    return CandidateMemory(trigger=f"when {text}", lesson=f"do {text}", failure_mode=f"avoid {text}",
+                           scope_hint="general", topic=None, evidence=list(evidence))
+
+
+def test_revise_carries_the_provenance_of_the_candidates_that_prompted_it():
+    """REVISE is the one op whose parsed payload has no candidate ordinal -- it is the curator
+    reacting to the pool as a whole -- and _bind_payloads used to hand it `evidence=[]`, which
+    made a REVISE untraceable to any problem. A real 4-problem run produced one.
+
+    It is bound to every candidate in the pool, not one, because that is genuinely what the
+    curator saw; claiming a single source would be a more precise lie.
+    """
+    candidates = [_cand("alpha", ["p_3"]), _cand("beta", ["p_7"])]
+    edits = _bind_payloads(
+        parse_curator_output("REVISE: sk_0002\nREASON: sharpen it\nTRIGGER: t\nLESSON: l\nAVOID: a", actor="general_curator"),
+        candidates, level="general", topic=None)
+
+    revises = [e for e in edits if e.op == "REVISE"]
+    assert len(revises) == 1
+    assert sorted(revises[0].payload.evidence) == ["p_3", "p_7"]
+    # A REVISE claims no individual candidate, so both are still separately accounted for.
+    assert sorted(e.payload.evidence for e in edits if e.op == "SKIP") == [["p_3"], ["p_7"]]
+
+
+def test_a_candidate_the_curator_never_mentions_is_recorded_as_rejected():
+    """store.py's own module docstring promises harness_log.jsonl holds "every candidate that was
+    proposed but rejected". It did not: a candidate the curator simply failed to mention produced
+    no edit, therefore no log line, therefore no trace that the problem ever proposed anything.
+
+    Unreferenced candidates become explicit SKIPs so they travel the existing rejection path,
+    with a reject reason that distinguishes them from a SKIP the curator actually asked for.
+    """
+    candidates = [_cand("alpha", ["p_3"]), _cand("beta", ["p_7"])]
+    edits = _bind_payloads(
+        parse_curator_output("ADD: 1\nREASON: useful", actor="general_curator"),
+        candidates, level="general", topic=None)
+
+    ops = [(e.op, e.payload.evidence) for e in edits]
+    assert ("ADD", ["p_3"]) in ops
+    dropped = [e for e in edits if e.op == "SKIP"]
+    assert len(dropped) == 1
+    assert dropped[0].payload.evidence == ["p_7"]
+    assert "not referenced" in dropped[0].reason
+
+
+def test_an_explicit_skip_is_not_relabelled_as_unreferenced():
+    candidates = [_cand("alpha", ["p_3"])]
+    edits = _bind_payloads(
+        parse_curator_output("SKIP: 1\nREASON: too specific", actor="general_curator"),
+        candidates, level="general", topic=None)
+    assert len(edits) == 1
+    assert edits[0].op == "SKIP"
+    assert "not referenced" not in edits[0].reason
+    assert edits[0].payload.evidence == ["p_3"]
+
+
+def test_adversarial_every_candidate_referenced_means_no_synthetic_skips():
+    candidates = [_cand("alpha", ["p_3"]), _cand("beta", ["p_7"])]
+    edits = _bind_payloads(
+        parse_curator_output("ADD: 1\nREASON: a\n\nADD: 2\nREASON: b", actor="general_curator"),
+        candidates, level="general", topic=None)
+    assert [e.op for e in edits] == ["ADD", "ADD"]
+
+
+def test_adversarial_an_unresolvable_ordinal_does_not_consume_a_candidate():
+    """An out-of-range ordinal is dropped by the binder. The candidates it did not name must
+    still be accounted for rather than silently vanishing alongside it."""
+    candidates = [_cand("alpha", ["p_3"])]
+    edits = _bind_payloads(
+        parse_curator_output("ADD: 9\nREASON: hallucinated ordinal", actor="general_curator"),
+        candidates, level="general", topic=None)
+    assert [e.op for e in edits] == ["SKIP"]
+    assert edits[0].payload.evidence == ["p_3"]
+
+
+def test_adversarial_merge_provenance_survives_binding():
+    candidates = [_cand("alpha", ["p_3"])]
+    edits = _bind_payloads(
+        parse_curator_output("MERGE: 1 INTO sk_0002\nREASON: overlaps\nTRIGGER: t\nLESSON: l\nAVOID: a", actor="general_curator"),
+        candidates, level="general", topic=None)
+    assert [e.op for e in edits] == ["MERGE"]
+    assert edits[0].payload.evidence == ["p_3"]
