@@ -1,0 +1,25 @@
+# Extra dependencies for the cross-problem skill harness, on top of what
+# `installation.sh` installs for AlphaApollo itself.
+#
+#   conda activate alphaapollo && pip install -r requirements-harness.txt
+#
+# Each entry below is here because a run failed without it, not because it
+# seemed useful.
+
+# AlphaApollo's Python computation tool runs model-authored code with
+# `sys.executable` (core/tools/python_code.py:232), i.e. in this very
+# environment, and its injected preamble is stdlib-only -- the model writes its
+# own `import scipy` / `import sympy` / `import numpy`. numpy and sympy arrive
+# with AlphaApollo's own dependencies; scipy does not. A real rollout was
+# observed losing an AIME problem to `ModuleNotFoundError: No module named
+# 'scipy'` after the model reached for `scipy.optimize.root_scalar`. The tool
+# reports this as an ordinary tool error, so the run continues and the problem
+# is simply scored wrong -- it depresses every arm's accuracy silently rather
+# than failing loudly.
+scipy
+
+# `openai.OpenAI(...)` builds its httpx transport at construction time and
+# resolves this machine's proxy environment at that moment. On a machine with
+# ALL_PROXY=socks5://... exported, constructing an Agent raises ImportError
+# before any request is made unless httpx's socks extra is present.
+httpx[socks]
