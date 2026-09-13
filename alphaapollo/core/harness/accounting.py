@@ -70,7 +70,7 @@ SOLVER_ROLES = ("solver", "summarizer", "aggregator")
 # make RawExperience look like it has near-zero management overhead in Task C's cost report,
 # when in fact it makes one such call per problem (denser than EvoHarness's per-batch
 # reflect/curate calls).
-MGMT_ROLES = ("reflect", "topic_curator", "general_curator", "raw_summarizer", "offline_labeling")
+MGMT_ROLES = ("reflect", "topic_curator", "general_curator", "raw_summarizer", "offline_labeling", "selector")
 
 # A ContextVar (not a plain module-level global) because problems within a batch may run
 # concurrently across threads; each thread must see only the role its own call stack set, never

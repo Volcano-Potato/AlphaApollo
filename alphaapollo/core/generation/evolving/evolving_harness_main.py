@@ -546,7 +546,13 @@ def run(config: str | None = None) -> None:
 
     problems = load_stream(harness_cfg["stream_path"])
 
+    # Management-side agents (Reflect, the curators, the selector). Defaults to the same config
+    # as the policy so a single-model setup needs no extra block; `harness.selector_model_cfg`
+    # overrides it for selection alone, which is what the paper does (Appendix F: Claude Sonnet
+    # 4.5 "for harness selection ... across all experiments", a stronger model than the solver).
     mgmt_agent = Agent(cfg_bundle["policy_model_cfg"])
+    selector_cfg = harness_cfg.get("selector_model_cfg")
+    selector_agent = Agent(selector_cfg) if selector_cfg else mgmt_agent
     arm_name = harness_cfg["arm"]
     if arm_name == "baseline":
         arm = build_arm(arm_name)
@@ -557,6 +563,7 @@ def run(config: str | None = None) -> None:
             arm_name,
             store_root=harness_cfg["store_root"],
             agent=mgmt_agent,
+            selector_agent=selector_agent,
             caps=Caps(**(harness_cfg.get("caps") or {})),
             budget=Budget(**(harness_cfg.get("budget") or {})),
             feedback_level=harness_cfg.get("feedback_level", "standard"),

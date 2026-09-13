@@ -1,4 +1,5 @@
 import json
+import re
 
 import pytest
 
@@ -28,11 +29,23 @@ AVOID: Extrapolating without numeric verification."""
 
 
 class ScriptedAgent:
+    """Replays a fixed script, except for harness-selection prompts.
+
+    Selection is a model call now (paper Appendix F), so a purely positional script would have
+    its Reflect/curator replies eaten by whichever selection call happened to come first. A
+    selection prompt is answered by naming every skill id it lists -- "select everything offered"
+    -- which keeps these tests about the arm's protocol rather than about selection judgement,
+    and leaves the script aligned with the reflect/curate calls it was written for.
+    """
+
     def __init__(self, replies):
         self.replies, self.prompts = list(replies), []
 
     def get_action_from_gpt(self, obs):
         self.prompts.append(obs)
+        if "Choose at most" in obs:
+            ids = re.findall(r"\bsk_\d+\b", obs)
+            return ", ".join(ids) if ids else "NONE"
         return self.replies.pop(0) if self.replies else "NO_PROPOSALS"
 
 

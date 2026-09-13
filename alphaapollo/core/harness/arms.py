@@ -59,6 +59,7 @@ from alphaapollo.core.harness.evolver import GeneralCurator, TopicCurator
 from alphaapollo.core.harness.reflect import _strip_reasoning, build_reflect_context, reflect, sanitize_feedback
 from alphaapollo.core.harness.render import NEUTRAL_SYSTEM_PROMPT, count_tokens, render_harness
 from alphaapollo.core.harness.schema import CandidateMemory, Skill, SkillEdit
+from alphaapollo.core.harness.selector import select_skills
 from alphaapollo.core.harness.store import Budget, Caps, SkillStore
 
 logger = logging.getLogger(__name__)
@@ -106,7 +107,9 @@ Reasoning excerpt: {reasoning_excerpt}"""
 #
 # Both RawExperienceArm's raw-summary ranking and EvoHarnessArm's snapshot-local skill ranking
 # need the exact same "how relevant is this text to the current question" primitive, and neither
-# can call ``SkillStore.select()`` directly for it (see ``_select_from_snapshot`` below for why).
+# can call ``SkillStore.select()`` directly for it: that method only ever reads live store
+# state, so a `record_usage()` for one problem in a batch could change what a later problem in
+# the same batch sees -- exactly the within-batch leak invariant (2) above forbids.
 # Rather than reach into ``store.py``'s underscore-prefixed helpers from a sibling module, this
 # is a small, self-contained reimplementation -- deliberately the same dumb, model-free formula
 # (fraction of one side's content words that also appear on the other), so a difference in
@@ -132,50 +135,16 @@ def _overlap(a: str, b: str) -> float:
     return len(words_a & _content_words(b)) / len(words_a)
 
 
-def _select_from_snapshot(skills: list[Skill], question: str, topic: str | None, budget: Budget) -> list[Skill]:
-    """``SkillStore.select()``'s exact algorithm (score, per-level quotas, token cap), but run
-    over an explicit, already-frozen ``skills`` list instead of the store's own live
-    ``self._skills``.
-
-    This duplication is deliberate, not an oversight: ``SkillStore.select()`` only ever reads
-    live store state, so calling it directly from ``EvoHarnessArm.system_prompt_for`` would mean
-    a ``record_usage()`` call for one problem in a batch (which mutates the live store's utility
-    counters) could change what a *later* problem in the same batch sees -- exactly the
-    within-batch leak invariant (2) in the module docstring forbids. Selecting from a
-    ``store.snapshot()`` taken once at ``begin_batch()`` closes that hole structurally.
-    """
-    candidates = [s for s in skills if s.level == "general" or s.topic == topic]
-    ranked = sorted(candidates, key=lambda s: (-(0.3 * s.utility() + 0.7 * _overlap(s.trigger, question)), s.id))
-
-    picked: list[Skill] = []
-    used_tokens = 0
-    n_general = n_topic = 0
-    for skill in ranked:
-        if len(picked) >= budget.b:
-            break
-        if skill.level == "general":
-            if n_general >= budget.general_max:
-                continue
-        elif n_topic >= budget.topic_max:
-            continue
-        if used_tokens + skill.n_tokens > budget.tokens:
-            continue
-        picked.append(skill)
-        used_tokens += skill.n_tokens
-        if skill.level == "general":
-            n_general += 1
-        else:
-            n_topic += 1
-    return picked
-
-
 def _select_raw(pool: list[dict], question: str, budget: Budget) -> list[dict]:
     """Pick up to ``budget.b`` raw-experience entries under the cumulative ``budget.tokens``
     cap, ranked by lexical overlap between the entry's summary text and ``question`` -- the same
     ``b``/``tokens`` fields ``EvoHarnessArm`` reads off its own ``Budget``, so the two arms'
     injection sizes are never a confound (see the module docstring's "serious opponent" note).
-    ``entry["problem_idx"]`` is a pure tiebreaker, exactly as ``Skill.id`` is in
-    ``_select_from_snapshot``, so the ranking is total and reproducible."""
+    ``entry["problem_idx"]`` is a pure tiebreaker, so the ranking is total and reproducible.
+
+    Unlike ``EvoHarnessArm``, this arm keeps a model-free selector on purpose: its whole point
+    is to be the "just paste relevant history in" strawman. Giving it an LLM selector too would
+    make it a second skill-compilation system and stop it answering the question it exists for."""
     ranked = sorted(pool, key=lambda e: (-_overlap(e["summary"], question), e.get("problem_idx", 0)))
     picked: list[dict] = []
     used_tokens = 0
@@ -322,9 +291,13 @@ class EvoHarnessArm(CrossProblemArm):
     """
 
     def __init__(self, *, store_root, agent, caps: Caps | None = None, budget: Budget | None = None,
-                 feedback_level: str = "standard", frozen: bool = False):
+                 feedback_level: str = "standard", frozen: bool = False, selector_agent=None):
         self.store = SkillStore(store_root, caps=caps, budget=budget)
         self.agent = agent
+        # The paper runs selection on a stronger model than the solver (Appendix F: Claude Sonnet
+        # 4.5 "for harness selection ... across all experiments"). Defaults to `agent` so a
+        # single-model setup still works without a second config block.
+        self.selector_agent = selector_agent if selector_agent is not None else agent
         self.feedback_level = feedback_level
         self.frozen = frozen
         self._frozen_snapshot: list[Skill] = []
@@ -337,8 +310,11 @@ class EvoHarnessArm(CrossProblemArm):
         self._selections = {}
 
     def system_prompt_for(self, problem: dict) -> str:
-        picked = _select_from_snapshot(self._frozen_snapshot, problem.get("question", ""),
-                                        problem.get("topic"), self.store.budget)
+        # Paper Algorithm 1 line 5 / Appendix F: Select is a model call over the whole harness,
+        # not a lexical filter, and it never sees a dataset topic label. It reads the FROZEN
+        # snapshot, so nothing another problem in this batch does can change what this one sees.
+        picked = select_skills(self.selector_agent, problem.get("question", ""),
+                               self._frozen_snapshot, self.store.budget)
         self._selections[problem.get("problem_idx")] = picked
         return render_harness(picked)
 
