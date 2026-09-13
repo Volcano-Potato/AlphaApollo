@@ -22,6 +22,7 @@ AlphaApollo 官方配置（`examples/configs/vllm_informal_math.yaml`）是 `evo
 | `diagB` | 2 | **5** | 2048 | `ks84hdar` |
 | `diagC` | 2 | 5 | **8192** | `zmvvfpfr` |
 | `diagE` | 2 | 1 | **8192** | `l0a7w001` |
+| `diagD` | **10** | 1 | 2048 | `o91ntebx` |
 
 `diagA2` 和 `diagA` 的配置**逐字相同**，唯一作用是量噪声底 —— 没有它，上面任何两行之间的差值都无法解读。
 
@@ -39,6 +40,6 @@ grep calls/solver docs/findings/diagnostics/diagA.metrics.jsonl | tail -1
 
 `pass1_round0` 是第 0 轮的正确性（题内 evolution 之前），`pass_final` 是最后一轮的。两者都由上游自己对 ground truth 打分，不经过本项目的任何代码。
 
-## 缺的那个点
+## 补充
 
-`evolving_round=10`（官方深度）是唯一没跑完的轴 —— 两次尝试都在并行跑时被系统杀掉（内存）。补上之前，`evolving_round` 的取值没有实测依据。
+全部六个点已跑完，结论见 `../experiment-log.md`。
