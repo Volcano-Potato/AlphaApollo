@@ -57,7 +57,7 @@ from pathlib import Path
 
 import pytest
 
-from alphaapollo.core.generation.evolving.evolving_harness_main import LeakageError, assert_no_gt_tool_call, extract_result, run_stream
+from alphaapollo.core.generation.evolving.evolving_harness_main import LeakageError, StreamAbort, assert_no_gt_tool_call, extract_result, run_stream
 from alphaapollo.core.harness.accounting import CallAccountant
 from alphaapollo.core.harness.arms import BaselineArm, CrossProblemArm
 from alphaapollo.core.harness.tracker import HarnessTracker
@@ -576,3 +576,48 @@ def test_real_fixture_answer_matching_ground_truth_is_not_leakage():
     # before its concluding "\boxed{204}" line.
     raw_final_round_text = "\n".join(REAL_PROBLEM_PAYLOAD["step_outputs"][0]["policy_actions"])
     assert "204" in raw_final_round_text
+
+
+# --- first-batch circuit breaker --------------------------------------------------------------
+
+
+def test_a_first_batch_where_every_problem_dies_aborts_the_run(tmp_path):
+    """A stream whose very first batch yields zero trajectories is misconfigured, not flaky, and
+    the per-problem degradation that makes the stream survive real flakiness is exactly what
+    hides it: the first real end-to-end run lost all four problems to `KeyError: 'data_source'`
+    and still finished "successfully", having spent four policy calls plus a full round of
+    management calls compiling skills out of four empty trajectories.
+
+    Only the FIRST batch trips the breaker. By the second batch the run has proven the wiring
+    works end to end, so a wholly-failed batch there is a provider outage -- precisely the case
+    the run is supposed to ride out rather than abandon.
+    """
+    def always_dies(problem_idx, problem, runtime):
+        raise KeyError("data_source")
+
+    with pytest.raises(StreamAbort) as excinfo:
+        run_stream(problems=problems(16), arm=BaselineArm(), runtime_factory=runtime_factory, run_problem_fn=always_dies, tracker=HarnessTracker(tmp_path, enabled=False), accountant=CallAccountant(), batch_size=8, max_workers=4)
+    assert "data_source" in str(excinfo.value)
+
+
+def test_a_partly_failing_first_batch_does_not_trip_the_breaker(tmp_path):
+    """7 of 8 surviving is flakiness; the stream must continue."""
+    def mostly_ok(problem_idx, problem, runtime):
+        if problem_idx == 0:
+            raise RuntimeError("transient")
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    summary = run_stream(problems=problems(16), arm=BaselineArm(), runtime_factory=runtime_factory, run_problem_fn=mostly_ok, tracker=HarnessTracker(tmp_path, enabled=False), accountant=CallAccountant(), batch_size=8, max_workers=4)
+    assert summary == {"n_problems": 16, "n_errors": 1}
+
+
+def test_a_wholly_failed_later_batch_is_ridden_out(tmp_path):
+    """Batch 0 proved the wiring; a total outage in batch 1 is the transient case the
+    log-and-continue path exists for."""
+    def dies_in_second_batch(problem_idx, problem, runtime):
+        if problem_idx >= 8:
+            raise RuntimeError("provider outage")
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    summary = run_stream(problems=problems(16), arm=BaselineArm(), runtime_factory=runtime_factory, run_problem_fn=dies_in_second_batch, tracker=HarnessTracker(tmp_path, enabled=False), accountant=CallAccountant(), batch_size=8, max_workers=4)
+    assert summary == {"n_problems": 16, "n_errors": 8}

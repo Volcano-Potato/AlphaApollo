@@ -66,6 +66,23 @@ logger = logging.getLogger(__name__)
 _VERIFY_TAG = re.compile(r"<informalmath_verify>")
 
 
+class StreamAbort(RuntimeError):
+    """Raised when the first batch produced no usable trajectory at all.
+
+    The per-problem log-and-continue path exists so a flaky provider cannot destroy a multi-hour
+    adaptation run, and it works -- but it degrades a dead problem into the same all-zero result a
+    genuinely-wrong answer would produce, which means a *wholly* broken configuration finishes
+    quietly and looks like a completed run. That is not theoretical: the first real end-to-end run
+    lost every problem to ``KeyError: 'data_source'`` (a key the stream loader did not carry but
+    that upstream's ``run_problem`` indexes unconditionally) and still reported success.
+
+    The breaker is scoped to the first batch on purpose. Until one batch has completed, nothing
+    has demonstrated that the config, the stream schema, the credentials and the upstream call
+    path fit together; after that, a wholly-failed batch is a provider outage, which is exactly
+    what the surrounding resilience is for.
+    """
+
+
 class LeakageError(RuntimeError):
     """Raised when a policy action contains the ground-truth verification tool call.
 
@@ -430,6 +447,13 @@ def run_stream(
                 except Exception as exc:  # noqa: BLE001 -- one problem's failure must not abort the batch
                     outcomes.append(("error", exc))
 
+        # Circuit breaker: a first batch with nothing but failures is a broken configuration, and
+        # every downstream stage is built to survive exactly this, which is what makes it
+        # invisible. Tripped before step 4 so no management budget is spent reflecting on it.
+        if batch_idx == 0 and all(kind == "error" for kind, _ in outcomes):
+            first_error = outcomes[0][1]
+            raise StreamAbort(f"every problem in the first batch failed; the run is misconfigured, not flaky. First error: {first_error!r}") from first_error
+
         # Step 4 -- serial, batch order, arm-mutating: record_selection / observe / metrics.
         # Fixed order keeps jsonl/wandb steps reproducible run over run, regardless of the
         # parallel step's actual completion order.
@@ -547,7 +571,7 @@ def run(config: str | None = None) -> None:
         config=harness_cfg,
     )
     accountant = CallAccountant()
-    uninstall = install_accounting(accountant, seed=harness_cfg.get("seed"))
+    uninstall = install_accounting(accountant, seed=harness_cfg.get("seed"), extra_body=harness_cfg.get("extra_body"))
 
     def runtime_factory(system_prompt: str) -> dict:
         # A fresh Agent per problem, not a shared one -- see the docstring above: problems within
