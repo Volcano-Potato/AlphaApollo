@@ -1,0 +1,68 @@
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+env:
+  config:
+    informal_math_evolving:
+      concurrency:
+        problem_max_workers: 0
+        verifier_max_workers: 1
+      enable_verify: true
+      evolving_round: 2
+      log_requests: false
+      nd_memory:
+        scored_history_length: 3
+      policy_env:
+        enable_python_code: true
+        history_length: 4
+        max_steps: 4
+        memory_type: simple
+      python_code_timeout: 60
+      verifier_env:
+        enable_python_code: true
+        history_length: 4
+        max_steps: 4
+        memory_type: simple
+  group_n: 1
+  name: informal_math_evolving
+harness:
+  arm: baseline
+  batch_size: 4
+  extra_body:
+    enable_thinking: false
+  feedback_level: standard
+  frozen: false
+  max_workers: 5
+  run_dir: <RUN_DIR>/diagA_out
+  seed: 1234
+  stream_path: <RUN_DIR>/diag20.parquet
+  wandb:
+    enabled: true
+    group: diag
+    project: alphaapollo-evo-harness
+    run_name: diagA
+policy_model_cfg:
+  api_key: ''
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  max_tokens: 2048
+  model_name: qwen3-8b
+  system_prompt: ''
+  temperature: 0.7
+preprocess: []
+run:
+  data_root: ./data/math-ai/
+  dataset_name: aime24
+  file_name: test.parquet
+  policy_env_num: 1
+  tag: diagA
+  test_times: 1
+  verifier_env_num: 1
+verifier_cfg:
+  api_key: ''
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  max_tokens: 2048
+  model_name: qwen3-8b
+  system_prompt: ''
+  temperature: 0.4
+vllm_config:
+  api_key: ''
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model_name: qwen3-8b

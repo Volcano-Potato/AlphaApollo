@@ -1,0 +1,25 @@
+{"step": 0, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 1, "adapt/pass1_round0": 1, "adapt/pass_final": 1}
+{"step": 2, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 3, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 3, "calls/solver": 85, "tokens/solver_in": 62056, "tokens/solver_out": 71943, "calls/solver_side_total": 85, "calls/mgmt_side_total": 0}
+{"step": 4, "adapt/pass1_round0": 1, "adapt/pass_final": 1}
+{"step": 5, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 6, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 7, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 7, "calls/solver": 162, "tokens/solver_in": 126881, "tokens/solver_out": 147231, "calls/solver_side_total": 162, "calls/mgmt_side_total": 0}
+{"step": 8, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 9, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 10, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 11, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 11, "calls/solver": 258, "tokens/solver_in": 205152, "tokens/solver_out": 232843, "calls/solver_side_total": 258, "calls/mgmt_side_total": 0}
+{"step": 12, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 13, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 14, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 15, "adapt/pass1_round0": 1, "adapt/pass_final": 1}
+{"step": 15, "calls/solver": 349, "tokens/solver_in": 284190, "tokens/solver_out": 312870, "calls/solver_side_total": 349, "calls/mgmt_side_total": 0}
+{"step": 16, "adapt/pass1_round0": 0, "adapt/pass_final": 1}
+{"step": 17, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 18, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 19, "adapt/pass1_round0": 0, "adapt/pass_final": 0}
+{"step": 19, "calls/solver": 455, "tokens/solver_in": 402261, "tokens/solver_out": 403902, "calls/solver_side_total": 455, "calls/mgmt_side_total": 0}
