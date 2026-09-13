@@ -132,6 +132,9 @@ def test_wandb_log_failure_after_successful_init_does_not_raise(tmp_path, monkey
 
     fake_wandb.init = lambda **kwargs: FakeRun()
     monkeypatch.setitem(sys.modules, "wandb", fake_wandb)
+    # This test is about log() failing mid-run, so it needs init to actually be reached; without
+    # a credential the tracker now short-circuits before init (see the no-credentials tests).
+    monkeypatch.setenv("WANDB_API_KEY", "deadbeef")
 
     tracker = HarnessTracker(tmp_path, enabled=True, project="p", run_name="r")
     assert tracker.wandb_run is not None
@@ -225,3 +228,100 @@ def test_creates_run_dir_if_missing(tmp_path):
     tracker.log(step=0, metrics={"x": 1})
     tracker.finish()
     assert (run_dir / "metrics.jsonl").exists()
+
+
+# --- wandb without credentials -----------------------------------------------------------------
+#
+# wandb is entirely optional here -- the assignment never asks for it, and metrics.jsonl is the
+# real record. But an *enabled* wandb on a machine that has never run `wandb login` is the default
+# state of a fresh checkout, and it must not be able to hurt the run.
+
+
+def test_wandb_enabled_without_credentials_degrades_to_jsonl(tmp_path, monkeypatch):
+    """Measured on wandb 0.30 under a real PTY: `wandb.init()` blocks on an interactive API-key
+    prompt and then raises `KeyboardInterrupt` -- a BaseException, which `except Exception` does
+    NOT catch. The tracker constructor propagated it and killed the process before a single
+    metrics.jsonl line was written.
+    """
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.delenv("WANDB_MODE", raising=False)
+
+    import wandb
+
+    def prompting_init(**kwargs):
+        raise KeyboardInterrupt  # what wandb actually raises when the prompt gets no input
+
+    monkeypatch.setattr(wandb, "init", prompting_init)
+
+    tracker = HarnessTracker(tmp_path, project="p", enabled=True)
+    assert tracker.wandb_run is None
+
+    tracker.log(0, {"adapt/pass_final": 1})
+    tracker.finish()
+    assert json.loads((tmp_path / "metrics.jsonl").read_text().strip()) == {"step": 0, "adapt/pass_final": 1}
+
+
+def test_wandb_init_is_not_even_attempted_without_credentials(tmp_path, monkeypatch):
+    """Catching the interrupt is not enough: reaching `wandb.init()` at all means blocking on a
+    terminal prompt (4s, measured) and dumping a signup banner into the run log. With no
+    credentials and no explicit offline mode there is nothing to log in to, so skip it."""
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.delenv("WANDB_MODE", raising=False)
+    monkeypatch.setattr("alphaapollo.core.harness.tracker._netrc_has_wandb", lambda: False)
+
+    called = []
+    import wandb
+    monkeypatch.setattr(wandb, "init", lambda **kw: called.append(kw))
+
+    tracker = HarnessTracker(tmp_path, project="p", enabled=True)
+    assert tracker.wandb_run is None
+    assert called == [], "wandb.init must not be reached when there is no way to authenticate"
+
+
+def test_an_api_key_in_the_environment_does_reach_wandb_init(tmp_path, monkeypatch):
+    """The skip must be a credential check, not a blanket disable -- a configured machine still
+    gets its wandb run."""
+    monkeypatch.setenv("WANDB_API_KEY", "deadbeef")
+
+    called = []
+    import wandb
+    monkeypatch.setattr(wandb, "init", lambda **kw: called.append(kw) or "RUN")
+
+    tracker = HarnessTracker(tmp_path, project="p", enabled=True)
+    assert tracker.wandb_run == "RUN"
+    assert called and called[0]["project"] == "p"
+
+
+def test_adversarial_offline_mode_needs_no_credentials(tmp_path, monkeypatch):
+    """WANDB_MODE=offline is a legitimate configuration that logs locally and never
+    authenticates; a credential check that ignored it would silently disable it."""
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.setenv("WANDB_MODE", "offline")
+    monkeypatch.setattr("alphaapollo.core.harness.tracker._netrc_has_wandb", lambda: False)
+
+    called = []
+    import wandb
+    monkeypatch.setattr(wandb, "init", lambda **kw: called.append(kw) or "RUN")
+
+    tracker = HarnessTracker(tmp_path, project="p", enabled=True)
+    assert tracker.wandb_run == "RUN"
+
+
+def test_adversarial_a_keyboard_interrupt_during_finish_does_not_lose_the_run(tmp_path, monkeypatch):
+    """finish() runs in the driver's `finally`; an exception there would mask whatever actually
+    ended the run."""
+    monkeypatch.setenv("WANDB_API_KEY", "deadbeef")
+
+    class InterruptingRun:
+        def log(self, *a, **k):
+            pass
+
+        def finish(self):
+            raise KeyboardInterrupt
+
+    import wandb
+    monkeypatch.setattr(wandb, "init", lambda **kw: InterruptingRun())
+
+    tracker = HarnessTracker(tmp_path, project="p", enabled=True)
+    tracker.finish()
+    assert tracker.wandb_run is None

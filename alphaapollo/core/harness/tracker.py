@@ -38,10 +38,44 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+# wandb is strictly optional here -- the assignment never asks for it, and `metrics.jsonl` is the
+# real record. But an *enabled* wandb on a machine that has never run `wandb login` is the default
+# state of a fresh checkout, and it must not be able to hurt the run. Measured on wandb 0.30 under
+# a real PTY: `wandb.init()` without credentials blocks ~4s on an interactive API-key prompt and
+# then raises `KeyboardInterrupt` -- a BaseException that `except Exception` does not catch. The
+# tracker constructor propagated it and killed the process before one metrics.jsonl line existed.
+_WANDB_NETRC_HOST = "api.wandb.ai"
+# Modes that log locally and never authenticate, so they are legitimate without credentials.
+_OFFLINE_MODES = frozenset({"offline", "dryrun", "disabled"})
+
+
+def _netrc_has_wandb() -> bool:
+    """Is there a stored `wandb login` credential? Checked by reading the netrc file directly
+    rather than via `netrc.netrc()`, whose parser raises on entries it dislikes -- on a shared
+    machine that would turn an unrelated netrc line into a wandb outage."""
+    for name in (".netrc", "_netrc"):
+        path = Path.home() / name
+        try:
+            if path.exists() and _WANDB_NETRC_HOST in path.read_text():
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _wandb_can_authenticate() -> bool:
+    """Whether reaching ``wandb.init()`` could succeed without a terminal prompt."""
+    if os.environ.get("WANDB_API_KEY"):
+        return True
+    if str(os.environ.get("WANDB_MODE", "")).strip().lower() in _OFFLINE_MODES:
+        return True
+    return _netrc_has_wandb()
 
 
 def _json_default(value: Any) -> Any:
@@ -93,10 +127,23 @@ class HarnessTracker:
             logger.info("wandb unavailable, logging to jsonl only: %s", exc)
             return None
 
+        # Checked BEFORE calling init: catching the interrupt is not enough, because merely
+        # reaching `wandb.init()` means blocking on a terminal prompt and dumping a signup banner
+        # into the run log. With no key, no netrc entry and no offline mode there is nothing to
+        # authenticate against, so there is no reason to ask.
+        if not _wandb_can_authenticate():
+            logger.warning("wandb is enabled but no credentials were found (WANDB_API_KEY, netrc, "
+                           "or WANDB_MODE=offline); logging to jsonl only. Run `wandb login` to enable it.")
+            return None
+
         try:
             return wandb.init(project=project, name=run_name, config=config, dir=str(self.run_dir))
-        except Exception as exc:
-            logger.warning("wandb.init() failed, logging to jsonl only: %s", exc)
+        except (Exception, KeyboardInterrupt) as exc:
+            # KeyboardInterrupt is listed explicitly: it is what wandb raises when its interactive
+            # prompt gets no input, and it is a BaseException, so `except Exception` misses it.
+            # Losing a multi-hour run to an optional logging backend is the worse failure; a real
+            # Ctrl-C during this sub-second call is vanishingly unlikely.
+            logger.warning("wandb.init() failed, logging to jsonl only: %r", exc)
             return None
 
     def log(self, step: int, metrics: dict) -> None:
@@ -168,5 +215,7 @@ class HarnessTracker:
         self.wandb_run = None
         try:
             run.finish()
-        except Exception as exc:
-            logger.warning("wandb.finish() failed: %s", exc)
+        except (Exception, KeyboardInterrupt) as exc:
+            # finish() runs in the driver's `finally`; anything escaping here would mask whatever
+            # actually ended the run. Same reasoning as `_try_init_wandb`'s catch.
+            logger.warning("wandb.finish() failed: %r", exc)
