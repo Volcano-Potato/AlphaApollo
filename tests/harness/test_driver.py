@@ -58,7 +58,15 @@ from pathlib import Path
 
 import pytest
 
-from alphaapollo.core.generation.evolving.evolving_harness_main import LeakageError, StreamAbort, assert_no_gt_tool_call, extract_result, run_stream
+from alphaapollo.core.generation.evolving.evolving_harness_main import (
+    FrozenArmWithoutState,
+    LeakageError,
+    StreamAbort,
+    assert_frozen_arm_has_state,
+    assert_no_gt_tool_call,
+    extract_result,
+    run_stream,
+)
 from alphaapollo.core.harness.accounting import CallAccountant
 from alphaapollo.core.harness.arms import BaselineArm, CrossProblemArm, EvoHarnessArm
 from alphaapollo.core.harness.schema import CandidateMemory, SkillEdit
@@ -687,3 +695,41 @@ def test_a_batch_larger_than_max_workers_still_shares_one_frozen_harness(tmp_pat
                accountant=CallAccountant(), batch_size=8, max_workers=3)
 
     assert len(set(seen)) == 1, "one batch must mean one frozen harness, however it is scheduled"
+
+
+# --- held-out misconfiguration guard -----------------------------------------------------------
+
+
+class _StatefulArm(BaselineArm):
+    def __init__(self, size):
+        self._size = size
+
+    def cross_problem_state_size(self):
+        return self._size
+
+
+def test_a_frozen_arm_with_an_empty_state_is_refused_before_any_problem_runs():
+    """Held-out evaluation points a frozen arm at the store or pool the adaptation run built.
+    Point it somewhere empty -- a typo, a wrong path, a run that never completed -- and the arm
+    injects nothing, silently becoming Baseline. Three identical curves, one wasted held-out
+    budget, and nothing in the output says why. This is the same defect the Raw arm had in code,
+    reappearing at the configuration layer.
+    """
+    with pytest.raises(FrozenArmWithoutState) as excinfo:
+        assert_frozen_arm_has_state(_StatefulArm(0), arm_name="evo", frozen=True, state_path="/tmp/nope")
+    assert "/tmp/nope" in str(excinfo.value), "the message must name the path to be actionable"
+
+
+def test_a_frozen_arm_carrying_state_is_accepted():
+    assert_frozen_arm_has_state(_StatefulArm(7), arm_name="evo", frozen=True, state_path="/tmp/ok")
+
+
+def test_an_unfrozen_arm_with_an_empty_state_is_the_normal_cold_start():
+    """Adaptation starts with nothing. Refusing that would refuse the experiment's first run."""
+    assert_frozen_arm_has_state(_StatefulArm(0), arm_name="evo", frozen=False, state_path="/tmp/cold")
+
+
+def test_a_frozen_baseline_is_not_a_misconfiguration():
+    """Baseline has no cross-problem state to load; `frozen` is meaningless for it, and tripping
+    the guard would block the held-out baseline run the comparison needs."""
+    assert_frozen_arm_has_state(BaselineArm(), arm_name="baseline", frozen=True, state_path=None)

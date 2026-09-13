@@ -589,3 +589,21 @@ def test_adversarial_frozen_is_available_on_every_arm_that_can_learn(tmp_path):
 
     for cls in (RawExperienceArm, EvoHarnessArm):
         assert "frozen" in inspect.signature(cls.__init__).parameters, cls.__name__
+
+
+def test_only_arms_that_can_learn_report_a_cross_problem_state_size(tmp_path):
+    """`None` means "this arm has no cross-problem state at all", which is different from "it has
+    state and the state is empty". The held-out guard needs to tell those apart: an empty Evo
+    store is a misconfiguration, an absent Baseline store is the whole point of Baseline."""
+    assert BaselineArm().cross_problem_state_size() is None
+    assert RawExperienceArm(agent=ScriptedAgent([])).cross_problem_state_size() == 0
+    assert EvoHarnessArm(store_root=tmp_path / "e", agent=ScriptedAgent([])).cross_problem_state_size() == 0
+
+
+def test_cross_problem_state_size_counts_what_was_loaded(tmp_path):
+    first = RawExperienceArm(agent=ScriptedAgent(["learned"]), pool_root=tmp_path / "raw")
+    first.begin_batch(0)
+    first.observe(PROBLEM, FAILED)
+    first.end_batch(0)
+
+    assert RawExperienceArm(agent=ScriptedAgent([]), pool_root=tmp_path / "raw").cross_problem_state_size() == 1

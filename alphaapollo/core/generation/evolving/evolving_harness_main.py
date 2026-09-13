@@ -83,6 +83,43 @@ class StreamAbort(RuntimeError):
     """
 
 
+class FrozenArmWithoutState(ValueError):
+    """Raised when a run is configured as frozen but the arm loaded no cross-problem state.
+
+    Held-out evaluation points a frozen arm at whatever the adaptation run produced -- a skill
+    store, a raw-experience pool. Point it somewhere empty (a typo, a stale path, an adaptation
+    run that never finished) and the arm injects nothing and behaves exactly like Baseline. The
+    result is three identical curves, a wasted held-out budget, and nothing in the output
+    explaining why: the failure is indistinguishable from a genuine null result, which is the
+    worst possible way for it to fail in an experiment whose whole purpose is to interpret null
+    results.
+
+    Refused up front, before a single problem runs, because by the time the numbers are in there
+    is no way to tell this apart from the finding it imitates.
+    """
+
+
+def assert_frozen_arm_has_state(arm, *, arm_name: str, frozen: bool, state_path=None) -> None:
+    """Refuse a frozen run whose arm has cross-problem state and loaded none of it.
+
+    Only fires when all three hold: the run is frozen, the arm *has* a notion of cross-problem
+    state (``cross_problem_state_size()`` is not ``None``, so Baseline is exempt), and that state
+    is empty. An unfrozen arm starting empty is the normal cold start -- the adaptation run's
+    first batch -- and must not be blocked.
+    """
+    if not frozen:
+        return
+    size = arm.cross_problem_state_size()
+    if size is None or size > 0:
+        return
+    raise FrozenArmWithoutState(
+        f"arm {arm_name!r} is configured frozen but loaded no cross-problem state from "
+        f"{state_path!r}. A frozen arm with an empty store/pool injects nothing and behaves "
+        f"exactly like the baseline, which is indistinguishable from a null result. Point this "
+        f"run at the directory the adaptation run wrote, or unset `frozen`."
+    )
+
+
 class LeakageError(RuntimeError):
     """Raised when a policy action contains the ground-truth verification tool call.
 
@@ -572,6 +609,11 @@ def run(config: str | None = None) -> None:
             feedback_level=harness_cfg.get("feedback_level", "standard"),
             frozen=bool(harness_cfg.get("frozen", False)),
         )
+
+    # Fail before spending a single call: a frozen arm that loaded nothing behaves like Baseline
+    # and its result is indistinguishable from a genuine null finding.
+    assert_frozen_arm_has_state(arm, arm_name=arm_name, frozen=bool(harness_cfg.get("frozen", False)),
+                                state_path=harness_cfg.get("store_root"))
 
     wandb_cfg = harness_cfg.get("wandb") or {}
     tracker = HarnessTracker(

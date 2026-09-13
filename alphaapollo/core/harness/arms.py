@@ -204,6 +204,17 @@ class CrossProblemArm:
         return one record per attempted update (empty list if nothing was updated)."""
         return []
 
+    def cross_problem_state_size(self) -> int | None:
+        """How many cross-problem items this arm currently holds, or ``None`` if it has no such
+        state at all.
+
+        ``None`` and ``0`` mean different things and the held-out guard depends on the
+        difference: an Evo arm with an empty store is a misconfiguration (it was pointed at the
+        wrong directory and will silently behave like Baseline), whereas a Baseline arm holding
+        nothing is the entire point of Baseline.
+        """
+        return None
+
 
 class BaselineArm(CrossProblemArm):
     """No cross-problem mechanism whatsoever: the raw performance floor. Answers "what does the
@@ -255,6 +266,9 @@ class RawExperienceArm(CrossProblemArm):
     def pool(self) -> list[dict]:
         """The live cross-problem pool. Read-only by convention -- only ``end_batch`` appends."""
         return self._pool
+
+    def cross_problem_state_size(self) -> int | None:
+        return len(self._pool)
 
     def _load_pool(self) -> list[dict]:
         """Read a previously persisted pool, tolerating a truncated final line.
@@ -383,6 +397,9 @@ class EvoHarnessArm(CrossProblemArm):
         self._frozen_snapshot = self.store.snapshot()
         self._pending = []
         self._selections = {}
+
+    def cross_problem_state_size(self) -> int | None:
+        return len(self.store.all())
 
     def system_prompt_for(self, problem: dict) -> str:
         # Paper Algorithm 1 line 5 / Appendix F: Select is a model call over the whole harness,
