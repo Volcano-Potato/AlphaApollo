@@ -52,6 +52,7 @@
 # what makes `test_real_fixture_answer_matching_ground_truth_is_not_leakage` meaningful.
 
 import json
+import threading
 import time
 from pathlib import Path
 
@@ -59,7 +60,8 @@ import pytest
 
 from alphaapollo.core.generation.evolving.evolving_harness_main import LeakageError, StreamAbort, assert_no_gt_tool_call, extract_result, run_stream
 from alphaapollo.core.harness.accounting import CallAccountant
-from alphaapollo.core.harness.arms import BaselineArm, CrossProblemArm
+from alphaapollo.core.harness.arms import BaselineArm, CrossProblemArm, EvoHarnessArm
+from alphaapollo.core.harness.schema import CandidateMemory, SkillEdit
 from alphaapollo.core.harness.tracker import HarnessTracker
 
 REAL_PROBLEM_PAYLOAD = json.loads((Path(__file__).parent / "fixtures" / "real_problem_payload.json").read_text())
@@ -621,3 +623,67 @@ def test_a_wholly_failed_later_batch_is_ridden_out(tmp_path):
 
     summary = run_stream(problems=problems(16), arm=BaselineArm(), runtime_factory=runtime_factory, run_problem_fn=dies_in_second_batch, tracker=HarnessTracker(tmp_path, enabled=False), accountant=CallAccountant(), batch_size=8, max_workers=4)
     assert summary == {"n_problems": 16, "n_errors": 8}
+
+
+class _NoopAgent:
+    """Never proposes anything, so end_batch is a no-op and these tests isolate scheduling."""
+
+    def get_action_from_gpt(self, obs):
+        return "NO_PROPOSALS"
+
+
+def test_batch_size_and_max_workers_are_independent_knobs(tmp_path):
+    """batch_size is the protocol knob (how often the harness may change); max_workers is the
+    throughput knob (how many problems run at once). Conflating them was a live design error:
+    "batch 8 x 3 arms = 24 concurrent, over the provider's ceiling of 12" framed a tradeoff
+    between paper fidelity and wall clock that does not exist -- batch_size=8 with
+    max_workers=4 keeps the paper's update granularity at half the concurrency.
+
+    batch_size=1 is NOT a safe fallback: the general-skill layer exists to find patterns across
+    multiple problems, so a one-problem batch can only ever yield topic skills, collapsing the
+    two-layer design Task A requires. Hence this property is load-bearing.
+    """
+    peak = {"n": 0, "now": 0}
+    lock = threading.Lock()
+
+    def tracking_run_problem(problem_idx, problem, runtime):
+        with lock:
+            peak["now"] += 1
+            peak["n"] = max(peak["n"], peak["now"])
+        time.sleep(0.02)
+        with lock:
+            peak["now"] -= 1
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    arm = EvoHarnessArm(store_root=tmp_path / "store", agent=_NoopAgent())
+    summary = run_stream(problems=problems(16), arm=arm, runtime_factory=runtime_factory,
+                         run_problem_fn=tracking_run_problem,
+                         tracker=HarnessTracker(tmp_path, enabled=False),
+                         accountant=CallAccountant(), batch_size=8, max_workers=4)
+
+    assert summary["n_problems"] == 16
+    assert peak["n"] <= 4, "max_workers must cap concurrency regardless of batch_size"
+
+
+def test_a_batch_larger_than_max_workers_still_shares_one_frozen_harness(tmp_path):
+    """The protocol guarantee must not quietly depend on batch_size == max_workers: every
+    problem in the batch sees the same injected text even when they run in separate waves."""
+    arm = EvoHarnessArm(store_root=tmp_path / "store", agent=_NoopAgent())
+    arm.store.apply(
+        [SkillEdit(op="ADD", actor="general_curator", reason="seed",
+                   payload=CandidateMemory(trigger="t", lesson="l", failure_mode="a",
+                                           scope_hint="general", topic=None, evidence=["p_0"]))],
+        problem_idx=0, batch=0, question_texts=[], ground_truths=[])
+
+    seen = []
+
+    def recording_run_problem(problem_idx, problem, runtime):
+        seen.append(runtime["policy_agent"].system_prompt)
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    run_stream(problems=problems(8), arm=arm, runtime_factory=runtime_factory,
+               run_problem_fn=recording_run_problem,
+               tracker=HarnessTracker(tmp_path, enabled=False),
+               accountant=CallAccountant(), batch_size=8, max_workers=3)
+
+    assert len(set(seen)) == 1, "one batch must mean one frozen harness, however it is scheduled"
