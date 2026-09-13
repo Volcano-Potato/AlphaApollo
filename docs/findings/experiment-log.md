@@ -153,11 +153,79 @@ name 非空、content 非空、没超预算。**没有任何质量闸门。**
 
 **在这个实验做完之前不加任何质量闸门。**
 
+> **已做，结论见下一条**：空洞不是 general curator 产生的，是被喂进去的。第一次测试因把空洞技能放进候选池而得出了相反的错误结论。
+
 ### 产物位置
 
 三轮的 store 与日志都在 scratchpad（不入库）：
 `s12_store` / `s12b_store` / `s12c_store`，日志 `s12.log` / `s12b.log` / `s12c.log`。
 验收脚本 `verify_smoke.py <run_dir> <batch_size>`，7 条可证伪检查。
+
+---
+
+## 2026-09-13 · 空洞技能的源头不是 general curator（一次被自己污染的实验）
+
+承接上一条的开放问题：空洞技能是方法的退化倾向，还是 qwen3-8b 能力不足？
+
+### 第一次测试 —— 结论错的
+
+用第三轮真实产出的 3 条 topic 技能重建候选池，8b 与 32b 各跑一次 general curator。两个模型输出本质相同的空洞内容（"ensure each step is logically sound and verified" / "logically justified and verified"），看上去支持"方法退化，与模型无关"。
+
+**这个实验是污染的。** 候选 3 本身就是第三轮那条空洞技能（`sk_0004`，`topic="mathematical_reasoning"`，trigger *"When solving a problem, ensure all steps are logically justified and verified"*）—— 我把退化喂回去测退化。
+
+顺带：我写的空洞检测正则只标出了 8b、漏掉了 32b，纯粹因为用词差一个字（"justified" vs "sound"）。**这类检测器不可靠，不要用它判定。**
+
+### 第二次测试 —— 干净候选池
+
+只保留两条**内容具体**的真实候选（几何对称、对数定义域），两个模型各跑两次：
+
+| 模型 | trigger |
+|---|---|
+| 8b · 1 | Recognize inherent structure or constraints before diving into algebraic manipulation |
+| 8b · 2 | Before solving a complex problem, analyze its structure and constraints |
+| 32b · 1 | pause before acting on the first representation |
+| 32b · 2 | Look for inherent structure (symmetry, domain rules) before diving into algebraic manipulation |
+
+**四次全部是站得住的跨题策略**，不是泛泛之词。"先识别结构再动手代数操作"是从"几何对称"和"对数定义域"两条候选里真正抽象出来的数学启发式。
+
+32b 略具体（"pause before acting on the first representation"），但 8b 同样可用。
+
+### 结论
+
+**空洞不是 general curator 产生的，是它被喂进去的。**
+
+```
+Reflect 产出空洞候选              ← 真正的源头
+      ↓
+topic curator 接受了它            ← 这里本该拦住（提示词已写"不要泛泛之词"）
+      ↓
+general curator 放大并复制成两份   ← 我之前以为的病灶
+```
+
+这也解释了 topic 名字为什么会退化成 `mathematical_reasoning`：一条内容空洞的技能，本来就没有具体主题可归。
+
+### 对上一条开放问题的回答
+
+- 不是模型能力问题 —— 8b 在干净输入上表现可用
+- 不是 general curator 的退化倾向 —— 它在干净输入上产出合理
+- **是空洞候选在链条里自我强化**：一旦一条进了 harness，后续 curation 会把它放大
+
+### 下一步（未做）
+
+闸门应加在 Reflect 输出或 topic curator 接受处，而不是 general 层。但在加之前需要先确认：
+
+- 空洞候选出现的频率（三轮里只观察到 1 条，样本太小）
+- 是否值得为它写代码 —— 官方实现同样只有提示词约束，加闸门是**偏离参考实现**，必须在 README 里标注为主动改动
+
+### 本次实验的样本量
+
+候选池 n=1，每模型 2 次。**很薄**。定性差异（污染池→空洞、干净池→具体，4/4 一致）明显，但不足以给出频率估计。
+
+### 顺带发现的可审计性缺口
+
+**原始候选没有被持久化。** Reflect 产出后被 curator 消费即丢弃，`harness_log` 只记 `skill_id` / `op` / `accepted` / `reject_reason` / `source_problems`，**不记候选内容**。所以一条被拒候选说了什么，事后无法追溯 —— 本次实验只能用"被接受的 topic 技能"反推候选，这本身就是个 workaround。
+
+作业要求"保存每个问题产生了哪些候选更新"，目前只做到了记录**决策**，没记录**内容**。
 
 ---
 
