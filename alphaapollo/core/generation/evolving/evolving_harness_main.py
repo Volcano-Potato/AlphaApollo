@@ -616,9 +616,16 @@ def run(config: str | None = None) -> None:
                                 state_path=harness_cfg.get("store_root"))
 
     wandb_cfg = harness_cfg.get("wandb") or {}
+    # Six runs share one project (3 arms x adaptation/held-out). Defaulting the name from the
+    # arm and the phase means the dashboard is readable even when a config forgets to set it --
+    # an unnamed run gets a random wandb nickname, which makes the three arms indistinguishable
+    # and defeats the only reason to watch this live.
+    phase = "heldout" if harness_cfg.get("frozen") else "adapt"
     tracker = HarnessTracker(
         harness_cfg.get("run_dir", "./outputs/harness"),
         project=wandb_cfg.get("project"),
+        run_name=wandb_cfg.get("run_name") or f"{phase}-{arm_name}",
+        group=wandb_cfg.get("group") or phase,
         enabled=bool(wandb_cfg.get("enabled", False)),
         config=harness_cfg,
     )

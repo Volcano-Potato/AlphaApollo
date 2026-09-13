@@ -106,16 +106,18 @@ class HarnessTracker:
     """
 
     def __init__(self, run_dir: str | Path, *, project: str | None = None,
-                 run_name: str | None = None, config: dict | None = None, enabled: bool = True):
+                 run_name: str | None = None, group: str | None = None,
+                 config: dict | None = None, enabled: bool = True):
         self.run_dir = Path(run_dir)
         self.run_dir.mkdir(parents=True, exist_ok=True)
         self.metrics_path = self.run_dir / "metrics.jsonl"
 
         self.wandb_run = None
         if enabled:
-            self.wandb_run = self._try_init_wandb(project, run_name, config)
+            self.wandb_run = self._try_init_wandb(project, run_name, group, config)
 
-    def _try_init_wandb(self, project: str | None, run_name: str | None, config: dict | None):
+    def _try_init_wandb(self, project: str | None, run_name: str | None, group: str | None,
+                        config: dict | None):
         """Best-effort wandb init. Returns ``None`` (never raises) on any failure: wandb not
         installed, not logged in, network unreachable, or the run dir not writable by wandb's
         own cache -- all observed as different exception types depending on wandb version and
@@ -137,7 +139,15 @@ class HarnessTracker:
             return None
 
         try:
-            return wandb.init(project=project, name=run_name, config=config, dir=str(self.run_dir))
+            # `group` is omitted entirely when unset rather than passed as None: six runs land
+            # in one project (3 arms x adaptation/held-out), and grouping is what puts the three
+            # arms of a phase on the same axes. An explicit name matters for the same reason --
+            # without it wandb assigns random nicknames and the dashboard cannot tell the arms
+            # apart, which is the only thing it is here to do.
+            kwargs = {"project": project, "name": run_name, "config": config, "dir": str(self.run_dir)}
+            if group is not None:
+                kwargs["group"] = group
+            return wandb.init(**kwargs)
         except (Exception, KeyboardInterrupt) as exc:
             # KeyboardInterrupt is listed explicitly: it is what wandb raises when its interactive
             # prompt gets no input, and it is a BaseException, so `except Exception` misses it.

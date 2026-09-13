@@ -325,3 +325,51 @@ def test_adversarial_a_keyboard_interrupt_during_finish_does_not_lose_the_run(tm
     tracker = HarnessTracker(tmp_path, project="p", enabled=True)
     tracker.finish()
     assert tracker.wandb_run is None
+
+
+# --- run identity ------------------------------------------------------------------------------
+#
+# Six runs land in the same wandb project (3 arms x adaptation/held-out). Without an explicit
+# name and group they arrive as random wandb nicknames in arbitrary order, and the one thing the
+# dashboard exists for -- putting the three arms on the same axes -- becomes manual guesswork.
+
+
+def test_the_run_name_and_group_reach_wandb(tmp_path, monkeypatch):
+    monkeypatch.setenv("WANDB_API_KEY", "deadbeef")
+    captured = {}
+
+    import wandb
+    monkeypatch.setattr(wandb, "init", lambda **kw: captured.update(kw) or "RUN")
+
+    HarnessTracker(tmp_path, project="p", run_name="adapt-evo", group="adaptation",
+                   config={"arm": "evo"}, enabled=True)
+
+    assert captured["name"] == "adapt-evo"
+    assert captured["group"] == "adaptation"
+    assert captured["project"] == "p"
+    assert captured["config"] == {"arm": "evo"}
+
+
+def test_no_group_is_sent_when_none_is_configured(tmp_path, monkeypatch):
+    """An explicit group=None is fine for wandb, but sending the key at all when the caller never
+    asked for grouping would be a behavioural change for existing single-run usage."""
+    monkeypatch.setenv("WANDB_API_KEY", "deadbeef")
+    captured = {}
+
+    import wandb
+    monkeypatch.setattr(wandb, "init", lambda **kw: captured.update(kw) or "RUN")
+
+    HarnessTracker(tmp_path, project="p", enabled=True)
+    assert "group" not in captured
+
+
+def test_adversarial_run_identity_does_not_require_wandb_to_be_reachable(tmp_path, monkeypatch):
+    """Naming must never become a reason a jsonl-only run fails."""
+    monkeypatch.delenv("WANDB_API_KEY", raising=False)
+    monkeypatch.delenv("WANDB_MODE", raising=False)
+    monkeypatch.setattr("alphaapollo.core.harness.tracker._netrc_has_wandb", lambda: False)
+
+    tracker = HarnessTracker(tmp_path, project="p", run_name="adapt-evo", group="adaptation", enabled=True)
+    tracker.log(0, {"adapt/pass_final": 1})
+    assert tracker.wandb_run is None
+    assert (tmp_path / "metrics.jsonl").exists()
