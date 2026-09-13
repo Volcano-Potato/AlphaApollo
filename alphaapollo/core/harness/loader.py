@@ -21,9 +21,16 @@ floor. That is fine for the baseline evolving loop, which never needs to know wh
 needs to split AIME strictly by year. Hence a separate loader here rather than reusing (or
 patching) the upstream one -- see the global constraint that upstream files stay untouched.
 
-``load_stream()`` also guarantees the ``gt_traj`` key is always present (empty string if absent),
-because ``evolving_main.run_problem`` reads ``current_problem["gt_traj"]`` unconditionally in two
-places -- a missing key there is a ``KeyError``, not a graceful fallback.
+``load_stream()`` also guarantees ``gt_traj``, ``ground_truth`` and ``data_source`` are always
+present (empty string if absent), because ``evolving_main.run_problem`` indexes all three straight
+off ``current_problem`` with ``[...]`` rather than ``.get(...)`` (evolving_main.py:552, :563) -- a
+missing key there is a ``KeyError``, not a graceful fallback. That ``KeyError`` is raised inside
+the driver's worker thread, where ``run_stream`` catches it, degrades the problem to an all-zero
+result and keeps going, so the failure mode is not a crash but a *silent* one: every problem
+yields zero solver signal while Reflect still fires and compiles skills out of empty
+trajectories. ``data_source`` was missing from this tuple originally and was caught only by
+running the driver end to end, which is why the list is now pinned by a test enumerating
+upstream's unconditional reads.
 
 ``interleave()`` implements the topic-interleaved task stream (design doc S15.3). AIME problems
 arrive in natural year order, so a fine-grained technique (e.g. "counting with a divisibility
@@ -42,7 +49,7 @@ import pandas as pd
 
 DEFAULT_TOPICS = ("algebra", "number_theory", "combinatorics", "geometry")
 
-_FIELDS = ("question", "ground_truth", "gt_traj", "topic", "problem_shape", "technique", "year", "contest", "number")
+_FIELDS = ("question", "ground_truth", "gt_traj", "data_source", "topic", "problem_shape", "technique", "year", "contest", "number")
 
 
 def load_stream(path: str | Path) -> list[dict]:

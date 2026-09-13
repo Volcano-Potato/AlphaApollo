@@ -33,6 +33,33 @@ def test_loader_always_supplies_gt_traj(tmp_path):
         assert "gt_traj" in problem
 
 
+@pytest.mark.parametrize("key", ["data_source", "ground_truth", "gt_traj"])
+def test_loader_supplies_every_key_run_problem_reads_unconditionally(tmp_path, key):
+    """``run_problem`` indexes these three straight off ``current_problem`` with ``[...]``, not
+    ``.get(...)`` (evolving_main.py:552 ground_truth, :563 data_source and gt_traj), so a stream
+    missing any one of them raises ``KeyError`` *inside the worker thread* -- where ``run_stream``
+    catches it, degrades the problem to an all-zero result, and lets the run continue. The whole
+    stream then silently produces zero solver signal while Reflect still fires and compiles
+    skills out of empty trajectories, which is far worse than a crash. ``data_source`` was the
+    key originally missed here, found only by running the driver end to end.
+
+    The two keys ``run_problem`` also indexes unconditionally but *writes itself* before reading
+    (``previous_solutions`` at :500, ``policy_solution`` at :611) are deliberately excluded.
+    """
+    for problem in load_stream(make_parquet(tmp_path)):
+        assert key in problem
+
+
+def test_loader_carries_the_real_data_source_value_through(tmp_path):
+    """Present-but-blank would satisfy the KeyError check while still losing the dataset label
+    that upstream stamps onto every step_outputs entry."""
+    rows = [{"extra_info": {"question": "Q", "ground_truth": "1", "topic": "algebra",
+                            "data_source": "gneubig/aime-1983-2024"}}]
+    path = tmp_path / "ds.parquet"
+    pd.DataFrame(rows).to_parquet(path)
+    assert load_stream(path)[0]["data_source"] == "gneubig/aime-1983-2024"
+
+
 def test_loader_assigns_sequential_problem_idx(tmp_path):
     problems = load_stream(make_parquet(tmp_path))
     assert [p["problem_idx"] for p in problems] == list(range(8))
