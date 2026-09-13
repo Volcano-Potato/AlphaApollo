@@ -149,9 +149,19 @@ def _looks_like_a_seed_rejection(exc: Exception) -> bool:
     return "seed" in str(exc).lower()
 
 
-def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -> Callable[[], None]:
+def install_accounting(accountant: CallAccountant, *, seed: int | None = None, extra_body: dict | None = None) -> Callable[[], None]:
     """Monkey-patch ``Agent.get_action_from_gpt`` to attribute every call to the active role
     (see ``role_scope``) and, if ``seed`` is given, inject it into every request.
+
+    ``extra_body`` is forwarded verbatim as the OpenAI SDK's ``extra_body`` on every request, for
+    provider-specific fields the upstream ``Agent`` cannot express. The concrete need: DashScope
+    rejects a *non-streaming* call to the qwen3 hybrid-reasoning models outright --
+    ``parameter.enable_thinking must be set to false for non-streaming calls`` -- so running this
+    project's chosen policy model at all requires ``{"enable_thinking": False}`` riding along.
+    This patch is already the single place that rebuilds the request kwargs, which makes it the
+    only place such a field can be injected without editing upstream. Left ``None``, no
+    ``extra_body`` key is sent at all, so a vLLM/OpenAI endpoint sees the byte-identical request
+    shape it saw before.
 
     Returns a zero-argument callable that restores the original method.
 
@@ -198,6 +208,12 @@ def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -
             call_kwargs = dict(base_kwargs)
             if with_seed:
                 call_kwargs["seed"] = seed_state["value"]
+            if extra_body is not None:
+                # A fresh copy per request, never the caller's dict and never one dict shared
+                # across requests: the OpenAI SDK merges `extra_body` into the outgoing JSON, and
+                # any in-place mutation by the SDK, a retry wrapper, or a caller holding the
+                # original would otherwise silently alter every subsequent call in the run.
+                call_kwargs["extra_body"] = dict(extra_body)
             return self.client.chat.completions.create(**call_kwargs)
 
         if seed_state["enabled"]:
@@ -234,8 +250,52 @@ def install_accounting(accountant: CallAccountant, *, seed: int | None = None) -
     patched_get_action_from_gpt._is_harness_accounting_patch = True
     Agent.get_action_from_gpt = patched_get_action_from_gpt
 
+    # --- role inheritance across thread boundaries ------------------------------------------
+    #
+    # `role_scope` sets a `contextvars.ContextVar`, and `ThreadPoolExecutor` does not propagate
+    # context into its worker threads. Upstream fans its verifier calls out through its own pool
+    # (`evolving_main.collect_actions_from_gpt_parallel:291`), so without this those calls land in
+    # an `unscoped` bucket and the solver-vs-management split -- a required deliverable -- is
+    # simply wrong: the first clean end-to-end run put 9 of 38 solver-side calls there.
+    #
+    # The role is captured in the parent at `.start()` and applied in the child at `.run()`, which
+    # reproduces exactly the lineage semantics `contextvars` would have given had the pool
+    # propagated context, and composes through arbitrarily deep nesting. It is a *default*, not a
+    # lock: an explicit `role_scope` inside the child still wins, and a thread with no scoped
+    # ancestor stays unscoped -- so a management call site that forgets its scope is still
+    # visible as unscoped instead of being quietly folded into the solver bucket.
+    #
+    # `threading.Thread` is process-global, hence patched only between install and uninstall.
+    original_thread_start = threading.Thread.start
+    original_thread_run = threading.Thread.run
+
+    @functools.wraps(original_thread_start)
+    def patched_thread_start(self):
+        # Runs in the PARENT thread, where the role is still visible.
+        self._harness_inherited_role = _current_role.get()
+        return original_thread_start(self)
+
+    @functools.wraps(original_thread_run)
+    def patched_thread_run(self):
+        # Runs in the CHILD thread, whose context starts empty.
+        role = getattr(self, "_harness_inherited_role", None)
+        if role is None:
+            return original_thread_run(self)
+        token = _current_role.set(role)
+        try:
+            return original_thread_run(self)
+        finally:
+            _current_role.reset(token)
+
+    threading.Thread.start = patched_thread_start
+    threading.Thread.run = patched_thread_run
+
     def uninstall() -> None:
-        # Idempotent: calling this more than once just reassigns the same original object.
+        # Idempotent: calling this more than once just reassigns the same original objects.
         Agent.get_action_from_gpt = original
+        # `threading.Thread` is shared with the whole interpreter, so leaving these in place
+        # would alter every unrelated thread created after the run finishes.
+        threading.Thread.start = original_thread_start
+        threading.Thread.run = original_thread_run
 
     return uninstall

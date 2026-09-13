@@ -316,3 +316,179 @@ def test_adversarial_double_uninstall_is_a_harmless_noop(agent):
     uninstall()
     uninstall()
     assert Agent.get_action_from_gpt is original
+
+
+def test_extra_body_is_forwarded_on_every_request(agent):
+    """DashScope rejects a non-streaming call to the qwen3 hybrid-reasoning models unless
+    `enable_thinking: false` rides along in the request body ("parameter.enable_thinking must be
+    set to false for non-streaming calls"), and the upstream `Agent` has no way to express that.
+    The accounting patch is the one place that already rebuilds the request kwargs, so it is also
+    where provider-specific body fields get injected."""
+    acc = CallAccountant()
+    uninstall = install_accounting(acc, extra_body={"enable_thinking": False})
+    try:
+        with role_scope("solver"):
+            agent.get_action_from_gpt("a")
+            agent.get_action_from_gpt("b")
+    finally:
+        uninstall()
+
+    assert [k["extra_body"] for k in agent._completions.kwargs_seen] == [{"enable_thinking": False}, {"enable_thinking": False}]
+
+
+def test_no_extra_body_key_is_sent_when_none_is_configured(agent):
+    """A vLLM/OpenAI endpoint that has never heard of `enable_thinking` must see exactly the
+    upstream request shape -- an `extra_body={}` would still be a behavioural change."""
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        with role_scope("solver"):
+            agent.get_action_from_gpt("a")
+    finally:
+        uninstall()
+
+    assert "extra_body" not in agent._completions.kwargs_seen[0]
+
+
+def test_adversarial_extra_body_is_not_shared_between_requests(agent):
+    """The per-call kwargs dict must not alias one caller-owned dict: a provider SDK (or a
+    retry wrapper) that mutates `extra_body` in place would otherwise silently corrupt every
+    subsequent request in the run."""
+    configured = {"enable_thinking": False}
+    acc = CallAccountant()
+    uninstall = install_accounting(acc, extra_body=configured)
+    try:
+        with role_scope("solver"):
+            agent.get_action_from_gpt("a")
+            agent._completions.kwargs_seen[0]["extra_body"]["enable_thinking"] = "MUTATED"
+            agent.get_action_from_gpt("b")
+    finally:
+        uninstall()
+
+    assert agent._completions.kwargs_seen[1]["extra_body"] == {"enable_thinking": False}
+    assert configured == {"enable_thinking": False}
+
+
+def test_adversarial_extra_body_survives_the_seed_fallback_retry(agent):
+    """The seed-rejection retry rebuilds the request from scratch; a retry that dropped
+    `extra_body` would turn one recoverable 400 into an unrecoverable one on DashScope."""
+    calls = []
+
+    class SeedRejectingCompletions(FakeCompletions):
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if "seed" in kwargs:
+                raise TypeError("Unrecognized request argument supplied: seed")
+            return FakeResponse()
+
+    completions = SeedRejectingCompletions()
+    agent.client = type("C", (), {"chat": type("Ch", (), {"completions": completions})()})()
+
+    acc = CallAccountant()
+    uninstall = install_accounting(acc, seed=7, extra_body={"enable_thinking": False})
+    try:
+        with role_scope("solver"):
+            agent.get_action_from_gpt("a")
+    finally:
+        uninstall()
+
+    assert len(calls) == 2
+    assert all(c["extra_body"] == {"enable_thinking": False} for c in calls)
+
+
+def test_a_call_made_in_a_child_thread_inherits_the_creating_thread_s_role(agent):
+    """Upstream runs its verifier fan-out in its own `ThreadPoolExecutor`
+    (evolving_main.collect_actions_from_gpt_parallel:291), and `contextvars` do NOT propagate
+    into pool threads. Without lineage inheritance those calls land in an `unscoped` bucket, so
+    the "solver calls vs. skill-management calls, reported separately" number is simply wrong --
+    the first clean end-to-end run put 9 of 38 solver-side calls there.
+
+    Inheritance is by thread *creation lineage*, which is what `contextvars` would have given us
+    had the pool propagated context, so a management call that forgot its `role_scope` still
+    shows up as unscoped rather than being quietly folded into the solver bucket.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        with role_scope("solver"):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                list(pool.map(agent.get_action_from_gpt, ["a", "b"]))
+    finally:
+        uninstall()
+
+    snap = acc.snapshot()
+    assert snap["calls/solver"] == 2
+    assert "calls/unscoped" not in snap
+
+
+def test_a_child_thread_created_outside_any_scope_stays_unscoped(agent):
+    """The fallback must not invent a role: a call with no scoped ancestor is still unscoped."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            list(pool.map(agent.get_action_from_gpt, ["a"]))
+    finally:
+        uninstall()
+
+    assert acc.snapshot()["calls/unscoped"] == 1
+
+
+def test_adversarial_a_child_thread_may_override_its_inherited_role(agent):
+    """Inheritance is a default, not a lock: an explicit `role_scope` inside the child wins."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def reflect_in_child(text):
+        with role_scope("reflect"):
+            return agent.get_action_from_gpt(text)
+
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        with role_scope("solver"):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                list(pool.map(reflect_in_child, ["a"]))
+    finally:
+        uninstall()
+
+    snap = acc.snapshot()
+    assert snap["calls/reflect"] == 1
+    assert "calls/solver" not in snap
+
+
+def test_adversarial_grandchild_threads_inherit_through_two_levels(agent):
+    """Upstream nests pools: the driver's own worker thread creates run_problem's verifier pool,
+    so attribution has to survive more than one hop."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def outer(_):
+        with ThreadPoolExecutor(max_workers=1) as inner:
+            return list(inner.map(agent.get_action_from_gpt, ["deep"]))
+
+    acc = CallAccountant()
+    uninstall = install_accounting(acc)
+    try:
+        with role_scope("solver"):
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                list(pool.map(outer, [0]))
+    finally:
+        uninstall()
+
+    snap = acc.snapshot()
+    assert snap["calls/solver"] == 1
+    assert "calls/unscoped" not in snap
+
+
+def test_adversarial_uninstall_restores_thread_start_and_run(agent):
+    """The lineage patch touches `threading.Thread`, which is process-global; leaving it in place
+    after uninstall would silently alter every unrelated thread in the interpreter."""
+    import threading
+
+    before = (threading.Thread.start, threading.Thread.run)
+    uninstall = install_accounting(CallAccountant())
+    uninstall()
+    assert (threading.Thread.start, threading.Thread.run) == before
