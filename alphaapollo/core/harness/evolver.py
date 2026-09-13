@@ -58,6 +58,51 @@ from alphaapollo.core.harness.store import Caps
 
 logger = logging.getLogger(__name__)
 
+# Paper Appendix E.2 and E.3 are two DIFFERENT contracts, and collapsing them into one shared
+# block was this module's root design error. E.2's topic curator works per proposal -- "For each
+# proposal, choose ACCEPT, MERGE, or SKIP" -- so copying one candidate is exactly right there.
+# E.3's general curator is told to "Create or update a general skill only when a pattern appears
+# across multiple contexts": it must name the contexts and write the generalisation itself.
+#
+# With one shared block, the general curator was handed only the per-proposal action. It could
+# not cite two problems (so the "spans 2+ problems" rule was unsatisfiable) and could not write
+# a synthesis (so every general skill it produced was a verbatim copy of a topic candidate).
+# Adding a comma-separated instruction to its prose while the block still said "Use EXACTLY these
+# forms: ADD: <candidate number>" only created a contradiction the model resolved in favour of
+# the block.
+_TAIL_FORMS = """MERGE: <candidate number> INTO <existing skill id>
+REASON: <brief>
+TRIGGER: <one sentence>
+LESSON:
+- <bullets, 60 words total>
+AVOID: <one sentence>
+
+REVISE: <existing skill id>
+REASON: <brief>
+TRIGGER: <one sentence>
+LESSON:
+- <bullets, 60 words total>
+AVOID: <one sentence>
+
+DELETE: <existing skill id>
+REASON: <brief>
+
+SKIP: <candidate number>
+REASON: <brief>
+
+Write in English. Be SPECIFIC and ACTIONABLE, never generic advice like "read carefully"."""
+
+_GENERAL_FORMAT = """For each decision output ONE block. Use EXACTLY these forms:
+
+ADD: <candidate numbers, comma-separated>
+REASON: <brief>
+TRIGGER: <one sentence>
+LESSON:
+- <bullets, 60 words total>
+AVOID: <one sentence>
+
+""" + _TAIL_FORMS
+
 _COMMON_FORMAT = """For each decision output ONE block. Use EXACTLY these forms:
 
 ADD: <candidate number>
@@ -126,9 +171,8 @@ Your job:
   names a particular problem type, formula, or mathematical object.
 - Do NOT create general skills for topic-specific procedures.
 - Prefer REVISE over ADD when an existing general skill already covers the pattern.
-- When you ADD, name EVERY candidate the pattern appears in, comma-separated
-  (`ADD: <candidate numbers, comma-separated>`), and write your own TRIGGER / LESSON / AVOID
-  distilling them -- do not copy one candidate's wording.
+- When you ADD, name EVERY candidate the pattern appears in, and write your own
+  TRIGGER / LESSON / AVOID distilling them -- never copy one candidate's wording.
 
 {fmt}
 
@@ -615,7 +659,7 @@ class GeneralCurator(_BaseCurator):
         return GENERAL_CURATOR_PROMPT.format(
             used=used, cap=caps.general, n=len(candidates),
             existing=_render_existing(existing), candidates=_render_candidates(candidates),
-            fmt=_COMMON_FORMAT,
+            fmt=_GENERAL_FORMAT,
         )
 
     def curate(self, agent, *, existing: list[Skill], candidates: list[CandidateMemory], caps: Caps) -> list[SkillEdit]:

@@ -472,3 +472,44 @@ def test_the_general_curator_is_shown_how_to_cite_several_candidates():
     GeneralCurator().curate(agent, existing=[], candidates=[cand(1), cand(2)], caps=Caps())
     prompt = agent.prompts[0]
     assert "ADD: <candidate numbers" in prompt or "comma" in prompt.lower()
+
+
+def test_the_general_curator_is_not_given_contradictory_add_forms():
+    """The shared format block says "Use EXACTLY these forms" and showed `ADD: <candidate
+    number>` -- singular. Telling the general curator elsewhere to use comma-separated ordinals
+    left it with two conflicting instructions in one prompt, and "EXACTLY" wins. The parser
+    accepted multi-ordinal ADDs that the prompt never asked for.
+
+    Paper Appendix E.2/E.3 are two different contracts, which is what this mirrors: the topic
+    curator chooses "ACCEPT, MERGE, or SKIP" per proposal, while the general curator is told to
+    "Create or update a general skill only when a pattern appears across multiple contexts".
+    """
+    agent = StubAgent("NO_PATTERNS")
+    GeneralCurator().curate(agent, existing=[], candidates=[cand(1), cand(2)], caps=Caps())
+    prompt = agent.prompts[0]
+
+    assert "ADD: <candidate number>\n" not in prompt, "the singular form must not be offered here"
+    assert "ADD: <candidate numbers, comma-separated>" in prompt
+
+
+def test_the_topic_curator_keeps_the_per_proposal_form():
+    """Appendix E.2 is per-proposal; a localized procedure legitimately comes from one failure,
+    and asking this curator to synthesise across proposals would blur the two layers back
+    together."""
+    agent = StubAgent("NO_PROPOSALS")
+    TopicCurator().curate(agent, existing=[], candidates=[cand(1)], topic="number_theory", caps=Caps())
+    prompt = agent.prompts[0]
+
+    assert "ADD: <candidate number>" in prompt
+    assert "comma-separated" not in prompt
+
+
+def test_the_general_format_still_offers_revise_and_delete():
+    """"Create or update" -- update is REVISE. Dropping it would leave the general layer able to
+    grow but never to correct itself."""
+    agent = StubAgent("NO_PATTERNS")
+    GeneralCurator().curate(agent, existing=[skill(1, "general")], candidates=[cand(1)], caps=Caps())
+    prompt = agent.prompts[0]
+
+    for form in ("REVISE:", "DELETE:", "SKIP:", "MERGE:"):
+        assert form in prompt, form
