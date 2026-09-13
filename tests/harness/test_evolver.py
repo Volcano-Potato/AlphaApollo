@@ -383,3 +383,92 @@ def test_adversarial_merge_provenance_survives_binding():
         candidates, level="general", topic=None)
     assert [e.op for e in edits] == ["MERGE"]
     assert edits[0].payload.evidence == ["p_3"]
+
+
+# --- a general ADD must be able to span the problems it generalises from -----------------------
+#
+# Found by running: after the "a general skill needs 2+ problems" rule landed, a 12-problem smoke
+# rejected EVERY general ADD (9 of 9, all `general_needs_two_problems`) and the general layer came
+# back empty. The rule was right; the mechanism could not satisfy it. `ADD: <candidate number>`
+# takes ONE ordinal and copies that candidate's text verbatim, and each Reflect call yields one
+# candidate carrying exactly one `p_<idx>` tag -- so a general ADD's evidence was always a single
+# problem, structurally.
+#
+# That also exposed the deeper defect the rule had merely revealed: a curator told to "distil
+# patterns ACROSS different topics" had no way to write a synthesis. Its only ADD form copied one
+# candidate unchanged.
+
+
+def test_an_add_may_cite_several_candidates_and_unions_their_evidence():
+    candidates = [_cand("alpha", ["p_3"]), _cand("beta", ["p_7"]), _cand("gamma", ["p_9"])]
+    edits = _bind_payloads(
+        parse_curator_output("ADD: 1,3\nREASON: same failure in both", actor="general_curator"),
+        candidates, level="general", topic=None)
+
+    adds = [e for e in edits if e.op == "ADD"]
+    assert len(adds) == 1
+    assert sorted(adds[0].payload.evidence) == ["p_3", "p_9"]
+
+
+def test_a_multi_candidate_add_may_carry_the_curators_own_synthesis():
+    """Copying one candidate's wording is not distillation. When the curator supplies
+    TRIGGER/LESSON/AVOID they win, which is what lets a general skill say something neither
+    source candidate said."""
+    candidates = [_cand("alpha", ["p_3"]), _cand("beta", ["p_7"])]
+    reply = ("ADD: 1,2\nREASON: both mis-handled bounds\n"
+             "TRIGGER: When a search space looks unbounded.\n"
+             "LESSON:\n- Bound the range before enumerating.\nAVOID: Enumerating an open range.")
+    edits = _bind_payloads(parse_curator_output(reply, actor="general_curator"),
+                           candidates, level="general", topic=None)
+
+    add = [e for e in edits if e.op == "ADD"][0]
+    assert add.payload.trigger == "When a search space looks unbounded."
+    assert "Bound the range before enumerating." in add.payload.lesson
+    assert add.payload.failure_mode == "Enumerating an open range."
+    assert sorted(add.payload.evidence) == ["p_3", "p_7"]
+
+
+def test_a_single_candidate_add_still_copies_that_candidate():
+    """The topic layer's normal case: one localized procedure learned from one failure."""
+    candidates = [_cand("alpha", ["p_3"])]
+    edits = _bind_payloads(parse_curator_output("ADD: 1\nREASON: useful", actor="topic_curator"),
+                           candidates, level="topic", topic="number_theory")
+
+    add = [e for e in edits if e.op == "ADD"][0]
+    assert add.payload.trigger == "when alpha"
+    assert add.payload.evidence == ["p_3"]
+
+
+def test_every_cited_candidate_counts_as_referenced():
+    """A candidate named inside a multi-ordinal ADD must not also be emitted as an unreferenced
+    SKIP -- that would log it as both accepted and rejected."""
+    candidates = [_cand("alpha", ["p_3"]), _cand("beta", ["p_7"])]
+    edits = _bind_payloads(parse_curator_output("ADD: 1,2\nREASON: both", actor="general_curator"),
+                           candidates, level="general", topic=None)
+    assert [e.op for e in edits] == ["ADD"]
+
+
+def test_adversarial_duplicate_and_out_of_range_ordinals_in_one_add():
+    """`ADD: 1,1,9` -- a repeat must not double-count evidence, and a bad ordinal must not
+    invalidate the whole edit when a good one is present."""
+    candidates = [_cand("alpha", ["p_3"])]
+    edits = _bind_payloads(parse_curator_output("ADD: 1,1,9\nREASON: x", actor="general_curator"),
+                           candidates, level="general", topic=None)
+    add = [e for e in edits if e.op == "ADD"][0]
+    assert add.payload.evidence == ["p_3"]
+
+
+def test_adversarial_an_add_naming_only_bad_ordinals_is_dropped():
+    candidates = [_cand("alpha", ["p_3"])]
+    edits = _bind_payloads(parse_curator_output("ADD: 8,9\nREASON: x", actor="general_curator"),
+                           candidates, level="general", topic=None)
+    assert not any(e.op == "ADD" for e in edits)
+    assert [e.op for e in edits] == ["SKIP"], "the unnamed candidate is still accounted for"
+
+
+def test_the_general_curator_is_shown_how_to_cite_several_candidates():
+    """The capability is useless if the prompt never mentions it."""
+    agent = StubAgent("NO_PATTERNS")
+    GeneralCurator().curate(agent, existing=[], candidates=[cand(1), cand(2)], caps=Caps())
+    prompt = agent.prompts[0]
+    assert "ADD: <candidate numbers" in prompt or "comma" in prompt.lower()

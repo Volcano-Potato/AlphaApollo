@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import logging
 import re
+from dataclasses import dataclass
 
 from alphaapollo.core.harness.accounting import role_scope
 from alphaapollo.core.harness.reflect import _strip_reasoning
@@ -125,6 +126,9 @@ Your job:
   names a particular problem type, formula, or mathematical object.
 - Do NOT create general skills for topic-specific procedures.
 - Prefer REVISE over ADD when an existing general skill already covers the pattern.
+- When you ADD, name EVERY candidate the pattern appears in, comma-separated
+  (`ADD: <candidate numbers, comma-separated>`), and write your own TRIGGER / LESSON / AVOID
+  distilling them -- do not copy one candidate's wording.
 
 {fmt}
 
@@ -256,11 +260,23 @@ def parse_curator_output(text: str, actor: str) -> list[SkillEdit]:
             reason = _parse_reason_only(block)
             if reason is None:
                 continue
-            idx = int_or_none(operand)
-            if idx is None:
+            # Comma-separated ordinals. A general skill is a pattern seen across several
+            # proposals, so it has to be able to name them -- with a single ordinal its evidence
+            # is always one problem and the "spans 2+ problems" rule is unsatisfiable by
+            # construction (observed: 9 of 9 general ADDs rejected in a 12-problem run).
+            indices = [i for i in (int_or_none(tok) for tok in operand.split(",")) if i is not None]
+            if not indices:
                 continue
+            # Synthesised text is optional: when the curator supplies TRIGGER/LESSON/AVOID it is
+            # writing a generalisation neither source candidate said, which is what distilling a
+            # cross-task pattern means. Without them this stays the old copy-one-candidate
+            # behaviour, which is the topic layer's normal case.
+            parsed = _parse_block_payload(block)
+            # Named `written`, not `text`: `text` is this function's own parameter, and shadowing
+            # it made the NEXT loop iteration's `len(text)` operate on None.
+            written = None if parsed is None else _PayloadRef(parsed[1], parsed[2], parsed[3])
             edits.append(SkillEdit(op="ADD", actor=actor, reason=reason, skill_id=None,
-                                    payload=_CandidateRef(idx)))
+                                    payload=_MultiCandidateRef(tuple(indices), written)))
             continue
 
         if op == "REVISE":
@@ -300,6 +316,19 @@ def int_or_none(token: str) -> int | None:
     if not token.isdigit():
         return None
     return int(token)
+
+
+@dataclass(frozen=True)
+class _MultiCandidateRef:
+    """An ADD naming one or more candidate ordinals, with optional curator-written text.
+
+    ``indices`` supplies the evidence (union of the cited candidates' tags); ``text`` when present
+    supplies the skill's own wording. Kept distinct from ``_CandidateRef`` so the single-candidate
+    SKIP path is unaffected.
+    """
+
+    indices: tuple
+    text: object = None
 
 
 class _CandidateRef:
@@ -401,6 +430,29 @@ def _bind_payloads(
 
         if payload is None:
             bound.append(edit)
+            continue
+
+        if isinstance(payload, _MultiCandidateRef):
+            sources = [s for s in (_resolve_candidate(i, candidates) for i in payload.indices) if s is not None]
+            if not sources:
+                continue
+            evidence: list[str] = []
+            for source in sources:
+                for tag in source.evidence:
+                    if tag not in evidence:
+                        evidence.append(tag)
+            primary = sources[0]
+            written = payload.text
+            new_payload = CandidateMemory(
+                trigger=written.trigger if written else primary.trigger,
+                lesson=written.lesson if written else primary.lesson,
+                failure_mode=written.avoid if written else primary.failure_mode,
+                scope_hint=level, topic=topic, evidence=evidence,
+                action_hint=primary.action_hint, target_id=primary.target_id,
+            )
+            referenced.update(payload.indices)
+            bound.append(SkillEdit(op=edit.op, actor=edit.actor, reason=edit.reason,
+                                    skill_id=edit.skill_id, payload=new_payload))
             continue
 
         if isinstance(payload, _CandidateRef):
