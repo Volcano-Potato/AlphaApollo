@@ -328,6 +328,29 @@ general curator 放大并复制成两份   ← 我之前以为的病灶
 
 ---
 
+## 2026-09-13 · `--config_path` 不存在，于是整个诊断跑的是别人的配置
+
+启动三点诊断阶梯时，我写的是 `--alphaapollo.workflows.evo --config_path <我的 yaml>`。**真正的 flag 是 `--config`。**
+
+`parse_standard_args`（`workflows/common.py:45`）用的是 `parse_known_args`，未知 token 不报错，而是交给 `normalize_unknown_overrides` 变成一条 override `config_path=/private/tmp/.../diagA.yaml` —— 一个谁也不读的键。于是 `--config` 取默认值 `DEFAULT_CONFIGS["evo"]`，也就是 **`examples/configs/vllm_informal_math.yaml`**，它的 `entrypoint_module` 是上游的 `evolving_main`，`base_url` 指向一个没启动的本地 vLLM。
+
+结果：
+
+```
+===> Problem 29 overall success: 0.0000, elapsed: 0.00s
+===> Finished run: avg success 0.0000, 30 problems processed.
+```
+
+**30 道 aime24 的题，25 秒，零次模型调用，退出码 0，末行写着 "Finished run"。** 我要跑的 20 道题、我的 driver、我的 arm，全程没有被触碰。
+
+三重巧合让它看起来像真的：题数（30）接近、耗时（25s）不夸张到起疑、`avg success 0.0000` 和我正在调查的"地板效应"**恰好是同一个方向的结论**。如果我没有因为 26 秒这个时长起疑，我会把它当成"官方参数下依然是 0"，并据此做出完全错误的实验决策。
+
+补救：重跑的循环里加了完成度闸门 —— 检查 `metrics.jsonl` 里 `adapt/pass1_round0` 的行数，不足 20 就终止整条链，而不是继续跑 B 和 C。附带修了 `rc=$?`：`$(date +%T)` 先执行会重置 `$?`，我的退出码一直报的是 `date` 的。
+
+**教训不是"记得写对 flag"** —— 而是任何 CLI 只要接受未知参数不报错，就必须在跑之前验证"我以为生效的配置真的生效了"。
+
+---
+
 ## 共同模式：静默失败
 
 到目前为止，真机暴露的缺陷几乎全是同一类 —— **出错了，但退出码是 0**：
@@ -340,6 +363,7 @@ general curator 放大并复制成两份   ← 我之前以为的病灶
 | wandb 无凭据 | 抛 `KeyboardInterrupt`（`BaseException`）杀进程，连 jsonl 兜底都没写 | `9f51c21` |
 | 冻结 arm 加载空 store | 退化成 Baseline，三条曲线重合，**与真 null result 无法区分** | `c6cbd9e` |
 | 标注全军覆没 | topic 列全空 | `ae625c6` |
+| `--config_path` 拼错 | 跑的是默认配置 + 上游 driver，末行仍是 "Finished run" | 见上条 |
 | 代理断连 | 丢 25% 题，batch 2 零产出 | 环境 |
 
 **这些都躲过了 400 多个通过的单元测试。** 两个成因：
