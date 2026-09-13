@@ -78,7 +78,7 @@ SENTINEL = "SENTINEL_GT_9999"
 
 
 def problems(n=16):
-    return [{"problem_idx": i, "question": f"Q{i}", "ground_truth": str(i), "gt_traj": "", "topic": "number_theory", "problem_shape": "shape"} for i in range(n)]
+    return [{"problem_idx": i, "question": f"Q{i}", "ground_truth": str(i), "gt_traj": "", "topic": "number_theory"} for i in range(n)]
 
 
 SIMPLIFIED_PAYLOAD = {

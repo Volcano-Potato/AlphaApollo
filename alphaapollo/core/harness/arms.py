@@ -451,7 +451,6 @@ class EvoHarnessArm(CrossProblemArm):
                 related = self._selections.get(problem.get("problem_idx"), [])
                 context = build_reflect_context(
                     existing_topics=existing_topics,
-                    problem_shape=problem.get("problem_shape", ""),
                     final_answer_given=str(result.get("final_answer_given", "")),
                     outcome="failed",
                     verifier_feedback=result.get("verifier_feedback", ""),

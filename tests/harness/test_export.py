@@ -167,7 +167,7 @@ def test_provenance_survives_the_whole_chain_from_arm_to_export(tmp_path):
     arm = EvoHarnessArm(store_root=tmp_path / "store",
                         agent=ScriptedAgent([reflection, "ADD: 1\nREASON: useful", "NO_PATTERNS"]))
     problem = {"problem_idx": 42, "question": "Count integers divisible by seven.",
-               "topic": "number_theory", "problem_shape": "counting-with-constraints"}
+               "topic": "number_theory"}
     result = {"pass_final": 0, "pass1_round0": 0, "final_answer_given": "412",
               "verifier_feedback": "The modular step is wrong.", "tool_errors": "",
               "reasoning_excerpt": "I assumed uniform residues.", "round_count": 3}

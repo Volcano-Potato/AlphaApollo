@@ -39,8 +39,7 @@ def a_skill(sid="sk_0003"):
 
 
 def context(**kw):
-    base = dict(existing_topics=["number_theory"], problem_shape="counting-with-constraints",
-                final_answer_given="412", outcome="failed",
+    base = dict(existing_topics=["number_theory"], final_answer_given="412", outcome="failed",
                 verifier_feedback="The modular step is wrong.", tool_errors="",
                 reasoning_excerpt="I assumed the residues were uniform.", round_count=3,
                 related_skills=[a_skill()])
@@ -56,7 +55,7 @@ def test_module_never_references_ground_truth():
 def test_context_builder_takes_no_question_or_answer_key():
     params = set(inspect.signature(build_reflect_context).parameters)
     assert "question" not in params and "ground_truth" not in params
-    assert params == {"existing_topics", "problem_shape", "final_answer_given", "outcome", "verifier_feedback", "tool_errors", "reasoning_excerpt", "round_count", "related_skills"}
+    assert params == {"existing_topics", "final_answer_given", "outcome", "verifier_feedback", "tool_errors", "reasoning_excerpt", "round_count", "related_skills"}
 
 
 def test_prompt_shows_the_related_existing_skills():
@@ -470,3 +469,31 @@ def test_adversarial_duplicate_and_blank_existing_topics_are_de_duplicated():
     agent = StubAgent(GOOD)
     reflect(agent, context(existing_topics=["number_theory", "Number Theory", "", None, "geometry"]))
     assert agent.prompts[0].count("- number_theory") == 1
+
+
+def test_the_prompt_carries_no_empty_labelled_slot():
+    """`problem_shape` was an input this project invented; nothing ever populated it (the stream
+    builder hardcoded ""), so every real Reflect call shipped a labelled-but-blank line. A blank
+    field is not neutral in a prompt -- it reads as information the model should have had and
+    lacks. Paper Appendix E.1's proposal inputs are "evaluation result, verifier details or rubric
+    feedback, trajectory signals, compressed trajectory, and related existing skills"; problem
+    shape is not among them, and the model-named TOPIC already covers "what kind of problem is
+    this". Removed rather than populated.
+    """
+    agent = StubAgent(GOOD)
+    reflect(agent, context())
+    prompt = agent.prompts[0]
+
+    assert "Problem shape" not in prompt
+    for line in prompt.splitlines():
+        if ":" in line and not line.startswith(("#", "-", "TRIGGER", "LESSON", "AVOID", "ACTION", "SCOPE", "TOPIC", "TARGET")):
+            label, _, value = line.partition(":")
+            if label.strip() in {"Answer you produced", "Outcome", "Rounds used"}:
+                assert value.strip(), f"{label.strip()!r} rendered empty"
+
+
+def test_the_context_whitelist_no_longer_takes_problem_shape():
+    params = set(inspect.signature(build_reflect_context).parameters)
+    assert "problem_shape" not in params
+    assert params == {"existing_topics", "final_answer_given", "outcome", "verifier_feedback",
+                      "tool_errors", "reasoning_excerpt", "round_count", "related_skills"}

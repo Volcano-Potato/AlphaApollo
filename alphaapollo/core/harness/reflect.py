@@ -77,7 +77,6 @@ _THINK_UNCLOSED = re.compile(r"<think>.*\Z", re.IGNORECASE | re.DOTALL)
 REFLECT_PROMPT = """You just failed a competition mathematics problem. Distill ONE reusable \
 lesson that would help you on FUTURE, DIFFERENT problems.
 
-Problem shape: {problem_shape}
 Answer you produced: {final_answer_given}
 Outcome: {outcome}
 Rounds used: {round_count}
@@ -213,7 +212,7 @@ def _render_topics(existing_topics: list[str]) -> str:
     return "\n".join(f"- {name}" for name in sorted(seen))
 
 
-def build_reflect_context(*, existing_topics: list[str], problem_shape: str, final_answer_given: str, outcome: str, verifier_feedback: str, tool_errors: str, reasoning_excerpt: str, round_count: int, related_skills: list[Skill]) -> dict:
+def build_reflect_context(*, existing_topics: list[str], final_answer_given: str, outcome: str, verifier_feedback: str, tool_errors: str, reasoning_excerpt: str, round_count: int, related_skills: list[Skill]) -> dict:
     """Assemble the whitelisted materials Reflect is allowed to see, as a plain dict ready for
     ``reflect()``. Every keyword here is listed explicitly (no ``**kwargs``, no dict parameter) --
     see the module docstring for why that is the actual anti-leakage mechanism, not just style.
@@ -245,7 +244,6 @@ def build_reflect_context(*, existing_topics: list[str], problem_shape: str, fin
     """
     return {
         "existing_topics": _render_topics(existing_topics),
-        "problem_shape": problem_shape,
         "final_answer_given": final_answer_given,
         "outcome": outcome,
         "verifier_feedback": sanitize_feedback(verifier_feedback),
@@ -282,7 +280,6 @@ def reflect(agent, context: dict, *, feedback_level: str = "standard") -> Candid
     """
     prompt = REFLECT_PROMPT.format(
         existing_topics=context["existing_topics"],
-        problem_shape=context["problem_shape"],
         final_answer_given=context["final_answer_given"],
         outcome=context["outcome"],
         round_count=context["round_count"],

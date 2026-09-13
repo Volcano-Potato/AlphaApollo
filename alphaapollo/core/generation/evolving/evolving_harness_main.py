@@ -548,11 +548,16 @@ def run(config: str | None = None) -> None:
     protocol deliberately gives *different* injected text, never race on a single mutable
     ``Agent.system_prompt`` attribute.
 
-    ``run_stream``/``extract_result`` are exercised by ``tests/harness/test_driver.py`` against
-    both a minimal and a fully-realistic ``run_problem``-shaped payload, but this function itself
-    is **not** -- it depends on Task 15's config files and prepared problem stream, neither of
-    which exists yet, and it has never been invoked against a real, running ``run_problem``. Treat
-    this wiring as best-effort until it has been run end to end at least once.
+    ``run_stream``/``extract_result`` are exercised by ``tests/harness/test_driver.py`` against a
+    minimal payload, a fully-realistic one, and a recorded real rollout. This function itself has
+    no unit test -- it constructs the live upstream stack -- but it *has* been run end to end
+    against the real API several times, most substantially a 12-problem Evo-Harness run over the
+    prepared adaptation stream (1354.7s; 93 solver + 20 management calls; cross-problem reuse
+    confirmed in ``selection_log.jsonl``). Every defect that run exposed is fixed and pinned by a
+    test; see the commits referenced from ``README_HARNESS.md``'s traceability section.
+
+    What this function still lacks is the committed run configs -- runs so far have used
+    hand-assembled YAML outside the repo.
     """
     if not config:
         raise ValueError("--config is required, e.g. --config examples/configs/harness_evo.yaml")

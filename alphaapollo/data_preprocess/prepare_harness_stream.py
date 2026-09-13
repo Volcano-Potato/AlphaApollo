@@ -117,7 +117,6 @@ def normalise_aime_row(raw: dict, *, data_source: str) -> dict | None:
         "gt_traj": "",
         "data_source": data_source,
         "topic": str(raw.get("topic") or "").strip(),
-        "problem_shape": "",
         "technique": "",
         "year": int(raw.get("Year") or raw.get("year") or 0),
         "contest": str(raw.get("Part") or raw.get("contest") or "").strip(),
@@ -222,25 +221,54 @@ def _load_heldout() -> list[dict]:
 
 
 def main(out_dir: str = "./data/harness", label_model: str = "", base_url: str = "",
-         first_year: int = 2018, last_year: int = 2022) -> None:
+         first_year: int = 2018, last_year: int = 2022, seed: int = 1234,
+         enable_thinking: bool = False) -> None:
     """``python -m alphaapollo.data_preprocess.prepare_harness_stream --out_dir ./data/harness``
 
     ``label_model`` is optional: without it the ``topic`` column is left blank and every other
     field is still correct, so the streams are usable immediately and the (purely analytical)
     labels can be filled in by a later pass.
+
+    Labelling runs under ``install_accounting`` for two reasons, neither optional in practice.
+    It is what injects ``extra_body`` -- DashScope rejects every non-streaming call to the qwen3
+    hybrid-reasoning models with ``parameter.enable_thinking must be set to false``, and without
+    this wrapper each of the 149 labelling calls fails with a 400 and the topic column silently
+    comes back blank while the script still exits 0. It is also what attributes the calls to the
+    ``offline_labeling`` role, so the cost report accounts for them instead of losing them.
     """
     logging.basicConfig(level=logging.INFO)
 
     agent = None
+    uninstall = None
     if label_model:
         from alphaapollo.core.generation.evolving.utils.agent import Agent
+        from alphaapollo.core.harness.accounting import CallAccountant, install_accounting
         agent = Agent({"model_name": label_model, "base_url": base_url, "api_key": "",
                        "temperature": 0.0, "max_tokens": 512})
+        accountant = CallAccountant()
+        uninstall = install_accounting(accountant, seed=seed,
+                                       extra_body={"enable_thinking": enable_thinking})
 
     out = Path(out_dir)
-    adaptation = build_rows(_load_adaptation(first_year, last_year),
-                            data_source="gneubig/aime-1983-2024", agent=agent)
-    heldout = build_rows(_load_heldout(), data_source="MathArena/aime_2025", agent=agent)
+    try:
+        adaptation = build_rows(_load_adaptation(first_year, last_year),
+                                data_source="gneubig/aime-1983-2024", agent=agent)
+        heldout = build_rows(_load_heldout(), data_source="MathArena/aime_2025", agent=agent)
+    finally:
+        if uninstall is not None:
+            uninstall()
+            logger.info("labelling calls: %s", accountant.snapshot().get("calls/offline_labeling", 0))
+
+    # A labelling pass that silently produced nothing is a configuration failure, not a stream
+    # with slightly worse metadata: every per-topic table downstream would be empty.
+    if label_model:
+        unlabelled = sum(1 for r in adaptation if not r["topic"])
+        if unlabelled == len(adaptation):
+            raise RuntimeError(
+                f"--label_model {label_model!r} was requested but every one of {len(adaptation)} "
+                f"adaptation problems came back unlabelled. The calls are failing; check the "
+                f"provider error above (a common one is DashScope requiring enable_thinking=false)."
+            )
 
     write_stream(adaptation, out / "adaptation.parquet")
     write_stream(heldout, out / "heldout.parquet")

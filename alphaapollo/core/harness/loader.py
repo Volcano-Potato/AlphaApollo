@@ -32,13 +32,22 @@ trajectories. ``data_source`` was missing from this tuple originally and was cau
 running the driver end to end, which is why the list is now pinned by a test enumerating
 upstream's unconditional reads.
 
-``interleave()`` implements the topic-interleaved task stream (design doc S15.3). AIME problems
-arrive in natural year order, so a fine-grained technique (e.g. "counting with a divisibility
-constraint") can recur dozens of problems apart. If a skill is minted at problem 7 and its first
-reuse opportunity is problem 58, the 50 problems in between just pay its context-injection cost
-for nothing -- and a three-arm comparison over that stream can't tell "the skill didn't help" from
-"the skill never got a chance to fire". Interleaving guarantees every topic reappears in every
-batch, collapsing skill mint-to-reuse latency to at most one batch.
+``interleave()`` implements the topic-interleaved task stream (design doc S15.3), and is
+**currently not used by any production path** -- ``prepare_harness_stream`` builds the streams in
+plain year order. It is kept deliberately rather than deleted.
+
+The reasoning it was written for still holds: AIME arrives in year order, so a fine-grained
+technique can recur dozens of problems apart, and a three-arm comparison over such a stream cannot
+distinguish "the skill did not help" from "the skill never got a chance to fire". What changed is
+that interleaving needs topic labels *before* the run, and the method turned out not to need
+per-problem topics at all (``reflect`` names its own; ``selector`` retrieves without a topic
+filter) -- so requiring them purely to order the stream would have reintroduced a dependency the
+design had just shed. AIME also mixes all four topics within a single year's 30 problems, so a
+topic recurs every few problems anyway.
+
+If the experiment shows skills being minted far from any reuse opportunity, this is the ready
+alternative ordering, and the assignment explicitly permits it. Its behaviour is pinned by the
+tests in ``tests/harness/test_loader.py``.
 """
 
 from __future__ import annotations
@@ -49,7 +58,7 @@ import pandas as pd
 
 DEFAULT_TOPICS = ("algebra", "number_theory", "combinatorics", "geometry")
 
-_FIELDS = ("question", "ground_truth", "gt_traj", "data_source", "topic", "problem_shape", "technique", "year", "contest", "number")
+_FIELDS = ("question", "ground_truth", "gt_traj", "data_source", "topic", "technique", "year", "contest", "number")
 
 
 def load_stream(path: str | Path) -> list[dict]:

@@ -11,8 +11,7 @@ def make_parquet(tmp_path):
     for i in range(8):
         rows.append({
             "extra_info": {"question": f"Q{i}", "ground_truth": str(i),
-                           "topic": TOPICS[i % 4], "problem_shape": "shape",
-                           "technique": "divisibility-counting", "year": 2018 + i // 4,
+                           "topic": TOPICS[i % 4], "technique": "divisibility-counting", "year": 2018 + i // 4,
                            "contest": "I", "number": i}
         })
     path = tmp_path / "stream.parquet"
@@ -158,7 +157,7 @@ def test_extra_info_not_a_dict_fills_blank_fields(tmp_path):
 
 def test_year_as_string_is_preserved_not_coerced(tmp_path):
     rows = [{"extra_info": {"question": "Q", "ground_truth": "1", "topic": "algebra",
-                             "problem_shape": "s", "technique": "t", "year": "2018",
+                             "technique": "t", "year": "2018",
                              "contest": "I", "number": 1}}]
     path = tmp_path / "string_year.parquet"
     pd.DataFrame(rows).to_parquet(path)

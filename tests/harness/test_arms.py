@@ -11,7 +11,7 @@ from alphaapollo.core.harness.render import NEUTRAL_SYSTEM_PROMPT
 from alphaapollo.core.harness.schema import Skill
 
 PROBLEM = {"problem_idx": 0, "question": "Count integers divisible by seven.",
-           "topic": "number_theory", "problem_shape": "counting-with-constraints"}
+           "topic": "number_theory"}
 
 FAILED = {"pass_final": 0, "pass1_round0": 0, "final_answer_given": "412",
           "verifier_feedback": "The modular step is wrong.\nMatches GT: False",
