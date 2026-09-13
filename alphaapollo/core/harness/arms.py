@@ -51,8 +51,11 @@ Two invariants apply to every arm, not just one:
 
 from __future__ import annotations
 
+import json
 import logging
 import re
+from datetime import datetime, timezone
+from pathlib import Path
 
 from alphaapollo.core.harness.accounting import role_scope
 from alphaapollo.core.harness.evolver import GeneralCurator, TopicCurator
@@ -219,14 +222,68 @@ class RawExperienceArm(CrossProblemArm):
     Callers running the Task C experiment must pass the *same* ``Budget`` values (or object) to
     this arm and to ``EvoHarnessArm`` -- both default independently to ``Budget()``, which is
     sufficient unless either arm is given a custom budget.
+
+    ``frozen`` and ``pool_root`` exist for exact parity with ``EvoHarnessArm``, and both are
+    load-bearing for Task C rather than conveniences:
+
+    - ``frozen=True`` makes ``end_batch`` a complete no-op (no summariser call, no pool write).
+      Held-out evaluation requires *all three* arms frozen; without this flag a held-out run
+      would keep summarising and growing this pool, i.e. learning on the test set. Frozen still
+      *injects* the pool it loaded -- "stop learning", not "stop using what was learned",
+      otherwise held-out would measure Baseline three times over.
+    - ``pool_root`` persists the pool to ``pool.jsonl`` and the per-problem injection record to
+      ``selection_log.jsonl``, mirroring ``SkillStore``'s layout. Without it the pool was
+      memory-only, so a held-out run in a separate process would start empty and this arm would
+      silently degenerate into ``BaselineArm`` -- making the comparison it exists for vacuous.
+
+    ``record_selection`` is overridden for the same reason: injected-context token cost is a
+    required result for all three arms (it is how the comparison accounts for overhead), and
+    inheriting the base class's no-op left this arm's cost simply absent from the report.
     """
 
-    def __init__(self, *, agent, budget: Budget | None = None):
+    def __init__(self, *, agent, budget: Budget | None = None, pool_root=None, frozen: bool = False):
         self.agent = agent
         self.budget = budget or Budget()
-        self._pool: list[dict] = []
+        self.frozen = frozen
+        self.pool_root = Path(pool_root) if pool_root is not None else None
+        self._pool: list[dict] = self._load_pool()
         self._frozen_pool: list[dict] = []
         self._pending: list[tuple[dict, dict]] = []
+        self._selections: dict[object, list[dict]] = {}
+
+    @property
+    def pool(self) -> list[dict]:
+        """The live cross-problem pool. Read-only by convention -- only ``end_batch`` appends."""
+        return self._pool
+
+    def _load_pool(self) -> list[dict]:
+        """Read a previously persisted pool, tolerating a truncated final line.
+
+        A run killed mid-write leaves a partial record; losing an entire adaptation pool over one
+        bad line would be far worse than skipping it. Same reasoning as ``export._read_jsonl``.
+        """
+        if self.pool_root is None:
+            return []
+        path = self.pool_root / "pool.jsonl"
+        if not path.exists():
+            return []
+        entries = []
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                logger.warning("skipping a corrupt line in %s", path)
+        return entries
+
+    def _append_jsonl(self, name: str, record: dict) -> None:
+        if self.pool_root is None:
+            return
+        self.pool_root.mkdir(parents=True, exist_ok=True)
+        with (self.pool_root / name).open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def begin_batch(self, batch_idx: int) -> None:
         self._frozen_pool = [dict(e) for e in self._pool]
@@ -234,7 +291,20 @@ class RawExperienceArm(CrossProblemArm):
 
     def system_prompt_for(self, problem: dict) -> str:
         picked = _select_raw(self._frozen_pool, problem.get("question", ""), self.budget)
+        self._selections[problem.get("problem_idx")] = picked
         return _render_raw(picked)
+
+    def record_selection(self, problem: dict, result: dict) -> None:
+        picked = self._selections.get(problem.get("problem_idx"), [])
+        self._append_jsonl("selection_log.jsonl", {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "problem_idx": problem.get("problem_idx"),
+            "topic": problem.get("topic"),
+            "n_selected": len(picked),
+            "source_problems": [e.get("problem_idx") for e in picked],
+            "n_tokens": sum(int(e.get("n_tokens", 0) or 0) for e in picked),
+            "success": bool(result.get("pass_final")),
+        })
 
     def observe(self, problem: dict, result: dict) -> None:
         # Dropped at the observe boundary, not inside end_batch, so a dead problem never even
@@ -246,6 +316,10 @@ class RawExperienceArm(CrossProblemArm):
         self._pending.append((problem, result))
 
     def end_batch(self, batch_idx: int) -> list[dict]:
+        if self.frozen:
+            # Complete no-op, exactly like EvoHarnessArm's: no summariser call, no pool write.
+            self._pending = []
+            return []
         added: list[dict] = []
         for problem, result in self._pending:
             try:
@@ -276,6 +350,7 @@ class RawExperienceArm(CrossProblemArm):
                 "n_tokens": count_tokens(summary),
             }
             self._pool.append(entry)
+            self._append_jsonl("pool.jsonl", entry)
             added.append(entry)
         self._pending = []
         return added

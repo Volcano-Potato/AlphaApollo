@@ -557,7 +557,10 @@ def run(config: str | None = None) -> None:
     if arm_name == "baseline":
         arm = build_arm(arm_name)
     elif arm_name == "raw":
-        arm = build_arm(arm_name, agent=mgmt_agent, budget=Budget(**(harness_cfg.get("budget") or {})))
+        arm = build_arm(arm_name, agent=mgmt_agent,
+                        budget=Budget(**(harness_cfg.get("budget") or {})),
+                        pool_root=harness_cfg.get("store_root"),
+                        frozen=bool(harness_cfg.get("frozen", False)))
     else:
         arm = build_arm(
             arm_name,

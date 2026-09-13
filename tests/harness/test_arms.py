@@ -473,3 +473,119 @@ def test_adversarial_mixed_batch_reflects_only_the_problem_that_ran(arms):
     evidence = [e for skill in arm.store.all() for e in skill.evidence]
     assert "p_1" in evidence
     assert "p_0" not in evidence
+
+
+# --- RawExperienceArm parity with EvoHarnessArm -----------------------------------------------
+#
+# Three asymmetries, all of the same kind: something thought through for the Evo arm and never
+# mirrored onto the arm it is compared against. Raw Experience is the assignment's second
+# control -- "is simply adding history already enough?" -- so an arm that cannot be frozen,
+# cannot persist, or cannot report its own cost does not answer that question.
+
+
+def test_the_raw_arm_can_be_frozen_for_held_out_evaluation(tmp_path):
+    """Held-out evaluation requires ALL THREE arms frozen. EvoHarnessArm had `frozen`; this one
+    did not, so a held-out run would keep summarising and growing its pool -- learning on the
+    test set."""
+    arm = RawExperienceArm(agent=ScriptedAgent(["a summary"] * 5), frozen=True)
+    arm.begin_batch(0)
+    arm.observe(PROBLEM, FAILED)
+
+    assert arm.end_batch(0) == []
+    assert arm.pool == []
+    assert arm.agent.prompts == [], "a frozen arm must not spend a management call either"
+
+
+def test_the_raw_pool_survives_a_fresh_arm_instance(tmp_path):
+    """EvoHarnessArm's SkillStore is on disk, so a held-out run in a separate process loads the
+    harness adaptation built. The raw pool was memory-only, so the same held-out run would start
+    empty and the Raw arm would silently degenerate into Baseline."""
+    first = RawExperienceArm(agent=ScriptedAgent(["learned something"]), pool_root=tmp_path / "raw")
+    first.begin_batch(0)
+    first.observe(PROBLEM, FAILED)
+    first.end_batch(0)
+
+    second = RawExperienceArm(agent=ScriptedAgent([]), pool_root=tmp_path / "raw")
+    assert [e["summary"] for e in second.pool] == ["learned something"]
+
+    second.begin_batch(1)
+    assert "learned something" in second.system_prompt_for(PROBLEM)
+
+
+def test_a_frozen_raw_arm_still_injects_the_pool_it_loaded(tmp_path):
+    """Frozen means "stop learning", not "stop using what was learned" -- otherwise held-out
+    evaluation would measure Baseline three times."""
+    first = RawExperienceArm(agent=ScriptedAgent(["learned something"]), pool_root=tmp_path / "raw")
+    first.begin_batch(0)
+    first.observe(PROBLEM, FAILED)
+    first.end_batch(0)
+
+    frozen = RawExperienceArm(agent=ScriptedAgent([]), pool_root=tmp_path / "raw", frozen=True)
+    frozen.begin_batch(0)
+    assert "learned something" in frozen.system_prompt_for(PROBLEM)
+    frozen.observe(PROBLEM, FAILED)
+    assert frozen.end_batch(0) == []
+    assert len(frozen.pool) == 1, "a frozen arm must not append to the pool it loaded"
+
+
+def test_the_raw_arm_records_what_it_injected_into_each_problem(tmp_path):
+    """"Injected-context token cost" is a required result for all three arms -- it is how the
+    comparison accounts for overhead. Raw inherited a no-op record_selection, so its injected
+    tokens were simply absent from the report."""
+    arm = RawExperienceArm(agent=ScriptedAgent(["learned something"]), pool_root=tmp_path / "raw")
+    arm.begin_batch(0)
+    arm.observe(PROBLEM, FAILED)
+    arm.end_batch(0)
+
+    arm.begin_batch(1)
+    arm.system_prompt_for(PROBLEM)
+    arm.record_selection(PROBLEM, FAILED)
+
+    lines = [json.loads(x) for x in (tmp_path / "raw" / "selection_log.jsonl").read_text().splitlines()]
+    assert len(lines) == 1
+    assert lines[0]["problem_idx"] == PROBLEM["problem_idx"]
+    assert lines[0]["n_tokens"] > 0
+    assert lines[0]["n_selected"] == 1
+    assert lines[0]["success"] is False
+
+
+def test_adversarial_record_selection_without_a_prior_prompt_call_is_safe(tmp_path):
+    """The base class documents this: a problem that errored before selection still reaches
+    record_selection."""
+    arm = RawExperienceArm(agent=ScriptedAgent([]), pool_root=tmp_path / "raw")
+    arm.begin_batch(0)
+    arm.record_selection(PROBLEM, FAILED)
+
+    lines = [json.loads(x) for x in (tmp_path / "raw" / "selection_log.jsonl").read_text().splitlines()]
+    assert lines[0]["n_selected"] == 0 and lines[0]["n_tokens"] == 0
+
+
+def test_adversarial_an_arm_with_no_pool_root_still_works_in_memory(tmp_path):
+    """Persistence is opt-in; the unit tests above and any throwaway run must not need a path."""
+    arm = RawExperienceArm(agent=ScriptedAgent(["s"]))
+    arm.begin_batch(0)
+    arm.observe(PROBLEM, FAILED)
+    assert arm.end_batch(0) != []
+    arm.record_selection(PROBLEM, FAILED)
+
+
+def test_adversarial_a_corrupt_pool_line_does_not_destroy_the_rest(tmp_path):
+    """A run killed mid-write leaves a truncated final line; losing the whole adaptation pool
+    over one partial record would be far worse than skipping it."""
+    root = tmp_path / "raw"
+    root.mkdir(parents=True)
+    (root / "pool.jsonl").write_text(
+        json.dumps({"problem_idx": 0, "topic": "t", "batch": 0, "summary": "good", "n_tokens": 2})
+        + "\n{\"problem_idx\": 1, \"summ")
+
+    arm = RawExperienceArm(agent=ScriptedAgent([]), pool_root=root)
+    assert [e["summary"] for e in arm.pool] == ["good"]
+
+
+def test_adversarial_frozen_is_available_on_every_arm_that_can_learn(tmp_path):
+    """A held-out config sets frozen on each arm uniformly; an arm silently lacking the flag
+    would keep learning while the others stopped."""
+    import inspect
+
+    for cls in (RawExperienceArm, EvoHarnessArm):
+        assert "frozen" in inspect.signature(cls.__init__).parameters, cls.__name__
