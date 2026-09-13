@@ -3,7 +3,7 @@ import json
 import pytest
 
 from alphaapollo.core.harness.export import build_report, export_harness
-from alphaapollo.core.harness.schema import CandidateMemory, Skill, SkillEdit
+from alphaapollo.core.harness.schema import CandidateMemory, SkillEdit
 from alphaapollo.core.harness.store import Caps, SkillStore
 
 
