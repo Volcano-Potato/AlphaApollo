@@ -63,6 +63,31 @@ from alphaapollo.core.harness.store import Budget, Caps, SkillStore
 
 logger = logging.getLogger(__name__)
 
+
+def has_trajectory(result: dict) -> bool:
+    """Did this problem actually produce a rollout to learn from?
+
+    ``run_stream`` degrades any problem whose ``run_problem`` raised into an all-zero result so
+    that one flaky call cannot abort an entire adaptation stream. That degradation is correct, but
+    it makes a dead problem indistinguishable from a genuine wrong answer if the only thing a
+    cross-problem arm checks is ``pass_final == 0`` -- and the two must be treated differently.
+    A wrong answer is precisely the signal this mechanism exists to compile; a problem that never
+    ran carries no signal at all, and feeding its empty context to Reflect just prompts the model
+    to invent a confident, unfalsifiable skill out of nothing and merge it into the harness.
+
+    The first real end-to-end run made this concrete: all four problems died on
+    ``KeyError: 'data_source'``, and the harness still came back with four fluent skills compiled
+    from four empty trajectories -- a silent, expensive, and completely undetectable-from-metrics
+    corruption of the experiment.
+
+    ``round_count`` is the discriminator rather than any text field: it is non-zero as soon as the
+    solver completed one evolving round, so a degenerate-but-real rollout (wrong answer, no
+    salvageable reasoning excerpt) still counts as a trajectory, while the all-zero shape never
+    does.
+    """
+    return int(result.get("round_count", 0) or 0) > 0
+
+
 # --- verbatim contract constants (mandated wording, not implementation detail) --------------
 
 _RAW_HEADER = ("You are a competition mathematics solver. Summaries of your own previous "
@@ -243,6 +268,12 @@ class RawExperienceArm(CrossProblemArm):
         return _render_raw(picked)
 
     def observe(self, problem: dict, result: dict) -> None:
+        # Dropped at the observe boundary, not inside end_batch, so a dead problem never even
+        # enters this arm's pending list -- see `has_trajectory`.
+        if not has_trajectory(result):
+            logger.warning("problem %s produced no trajectory; not summarizing it into the raw pool",
+                           problem.get("problem_idx"))
+            return
         self._pending.append((problem, result))
 
     def end_batch(self, batch_idx: int) -> list[dict]:
@@ -324,6 +355,13 @@ class EvoHarnessArm(CrossProblemArm):
         )
 
     def observe(self, problem: dict, result: dict) -> None:
+        # Dropped at the observe boundary, not inside end_batch, so a dead problem can never
+        # reach Reflect, contribute a `p_<idx>` evidence tag, or spend a management call on an
+        # empty context -- see `has_trajectory`.
+        if not has_trajectory(result):
+            logger.warning("problem %s produced no trajectory; not reflecting on it",
+                           problem.get("problem_idx"))
+            return
         self._pending.append((problem, result))
 
     def end_batch(self, batch_idx: int) -> list[dict]:

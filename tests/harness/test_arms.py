@@ -384,3 +384,74 @@ def test_evo_harness_arm_introduces_no_bare_unaccounted_model_call(make_real_age
     assert snap["calls/general_curator"] == 1
     assert snap["calls/mgmt_side_total"] == 3
     assert snap.get("calls/solver_side_total", 0) == 0
+
+
+# `_ZERO_RESULT` from evolving_harness_main, reproduced here rather than imported so this test
+# keeps failing if the driver's shape and the arms' expectations ever drift apart.
+NO_TRAJECTORY = {"pass1_round0": 0, "pass_final": 0, "final_answer_given": "",
+                 "verifier_feedback": "", "tool_errors": "", "reasoning_excerpt": "",
+                 "round_count": 0}
+
+
+def test_evo_arm_does_not_compile_a_skill_from_a_problem_that_never_ran(arms):
+    """A problem whose `run_problem` raised is recorded as the driver's all-zero result so the
+    rest of the stream survives. But "no trajectory" is missing data, not a failure to learn
+    from: `pass_final == 0` alone would send an empty context to Reflect, which dutifully invents
+    a plausible-sounding skill out of nothing and merges it into the harness.
+
+    This is not hypothetical -- it is what the first real end-to-end run actually did. Every one
+    of four problems died on `KeyError: 'data_source'`, and the harness still came back with four
+    confidently-worded skills compiled from four empty trajectories.
+    """
+    arm = arms["evo"]
+    arm.begin_batch(0)
+    arm.system_prompt_for(PROBLEM)
+    arm.observe(PROBLEM, NO_TRAJECTORY)
+    assert arm.end_batch(0) == []
+    assert arm.store.all() == []
+    assert arm.agent.prompts == [], "no LLM call may be spent on an empty trajectory"
+
+
+def test_raw_arm_does_not_summarize_a_problem_that_never_ran(arms):
+    """Same failure, same cost: the raw-experience arm would spend one management call per dead
+    problem summarizing an empty string, and pollute its pool with the result."""
+    arm = arms["raw"]
+    arm.begin_batch(0)
+    arm.observe(PROBLEM, NO_TRAJECTORY)
+    assert arm.end_batch(0) == []
+    assert arm.agent.prompts == []
+
+
+def test_a_genuine_failure_is_still_reflected_on(arms):
+    """The guard must key on "no trajectory", not on "did not pass" -- a real wrong answer is
+    exactly the signal this whole mechanism exists to learn from."""
+    arm = arms["evo"]
+    arm.begin_batch(0)
+    arm.system_prompt_for(PROBLEM)
+    arm.observe(PROBLEM, FAILED)
+    assert arm.end_batch(0) != []
+    assert arm.store.all() != []
+
+
+def test_adversarial_a_round_that_ran_but_produced_no_text_is_still_a_failure(arms):
+    """A rollout that completed a round and returned a wrong answer with no salvageable
+    reasoning excerpt is degenerate but real; `round_count` is the discriminator, and this must
+    not be swept up by the no-trajectory guard."""
+    arm = arms["evo"]
+    arm.begin_batch(0)
+    arm.system_prompt_for(PROBLEM)
+    arm.observe(PROBLEM, {**NO_TRAJECTORY, "round_count": 1, "final_answer_given": "9"})
+    assert arm.end_batch(0) != []
+
+
+def test_adversarial_mixed_batch_reflects_only_the_problem_that_ran(arms):
+    """One dead problem must not suppress its batch-mates, and must not contribute evidence."""
+    arm = arms["evo"]
+    arm.begin_batch(0)
+    arm.system_prompt_for(PROBLEM)
+    arm.observe({**PROBLEM, "problem_idx": 0}, NO_TRAJECTORY)
+    arm.observe({**PROBLEM, "problem_idx": 1}, FAILED)
+    assert arm.end_batch(0) != []
+    evidence = [e for skill in arm.store.all() for e in skill.evidence]
+    assert "p_1" in evidence
+    assert "p_0" not in evidence
