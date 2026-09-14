@@ -546,9 +546,15 @@ def run_stream(
             # points at n=149: large enough to invent or erase the effect being measured.
             # With the flag, the arms can be compared on the intersection of problems all three
             # actually completed, which is the only fair comparison available.
+            # `topic` rides along so the per-topic breakdown -- required for *all three* arms --
+            # is a group-by rather than a join against the stream file. The Baseline arm writes
+            # no selection log, so without this its per-topic numbers would be the only ones
+            # needing a different code path to compute, which is how breakdowns end up
+            # inconsistent between arms.
             tracker.log(step, {"adapt/pass1_round0": result["pass1_round0"],
                                "adapt/pass_final": result["pass_final"],
-                               "adapt/error": int(kind == "error")})
+                               "adapt/error": int(kind == "error"),
+                               "topic": problem.get("topic") or ""})
 
         # Step 5 -- only now may the harness/pool actually change. A misbehaving arm's own
         # end_batch() failing must not take down the rest of the adaptation stream (the

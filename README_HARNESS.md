@@ -435,8 +435,8 @@ python -m alphaapollo.data_preprocess.prepare_harness_stream \
 
 ## 7. 实验设计与运行命令
 
-> **⚠️ 三组实验尚未运行，本节只有设计与命令形状，没有任何结果。**
-> **运行配置文件本身也还不存在**，见 §11。
+> **⚠️ 三组实验尚未运行。本节给出的是设计、配置与命令 —— 没有任何结果数字。**
+> 基础设施（配置、运行脚本、断点续跑、分析器）已就绪并在真机上验证过，见 §11。
 
 ### 7.1 三条臂
 
@@ -465,42 +465,121 @@ python -m alphaapollo.data_preprocess.prepare_harness_stream \
 
 `batch_size`（协议旋钮：harness 多久能变一次）与 `max_workers`（吞吐旋钮：同时跑几道题）是**两个独立参数**，由 `tests/harness/test_driver.py` 钉死。混淆二者曾导致一个不存在的设计取舍（"batch 8 × 3 臂并行 = 24 并发，超过 provider 上限 12，所以只能降 batch"）—— 实际上 `batch_size=8` + `max_workers=4` 就能在一半并发下保持论文的更新粒度。这一点重要，因为 `batch_size=1` **不是**安全回退：general curator 的全部意义是在多道题之间找模式，单题 batch 只能产出 topic skill，Task A 要求的双层设计会直接塌掉（commit `385104d`）。
 
-### 7.4 运行命令（配置文件尚未提交）
-
-驱动器 CLI 已经可用：
+### 7.4 运行
 
 ```bash
-export OPENAI_API_KEY=<your key>
-python -m alphaapollo.core.generation.evolving.evolving_harness_main \
-    --config examples/configs/harness_evo_adapt.yaml
+export OPENAI_API_KEY=<your key>          # 任何配置里都没有 key，只从环境读
+
+nohup ./scripts/run_experiments.sh > run.log 2>&1 &
+disown
 ```
 
-`harness:` 段读取的配置键（来自 `evolving_harness_main.run()`）：
+`nohup` + `disown` **不是装饰**。两次诊断跑曾在半途被杀 —— 不是这台机器的问题（进程占 491MB，机器有 24GB），而是启动它的 agent 会话在拆除后台任务。多小时的跑必须归属系统，而不是归属启动它的那个 shell。
 
-```yaml
-harness:
-  arm: evo                       # baseline | raw | evo
-  stream_path: ./data/harness/adaptation.parquet
-  store_root:  ./outputs/harness/evo/store      # frozen 阶段指向 adaptation 跑出来的目录
-  run_dir:     ./outputs/harness/evo/adapt
-  batch_size: 8                  # 协议旋钮
-  max_workers: 4                 # 吞吐旋钮（实测 provider 上限 12）
-  frozen: false                  # held-out 阶段三条臂全部 true
-  feedback_level: standard       # standard | minimal（verifier 反馈质量消融）
-  seed: 1234
-  caps:   {general: 5, per_topic: 5}
-  budget: {b: 6, general_max: 3, topic_max: 4, tokens: 800}
-  extra_body: {enable_thinking: false}          # DashScope qwen3 必需；指向 vLLM 时删掉
-  selector_model_cfg:
-    model_name: qwen3-32b
-    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
-    api_key: ""                  # 走 OPENAI_API_KEY
-    temperature: 0.0
-    max_tokens: 512
-  wandb: {enabled: true, project: alphaapollo-evo-harness}
+脚本按 adaptation（三臂并行）→ 冻结状态 → held-out 的顺序跑完六个 run。**中断后重跑同一条命令即可续**（§7.5）。
+
+```bash
+./scripts/run_experiments.sh adapt        # 只跑 adaptation
+./scripts/run_experiments.sh heldout      # 只跑 held-out（需 adaptation 已完成）
+PARALLEL=0 ./scripts/run_experiments.sh   # 三臂串行
+ARMS="baseline evo" ./scripts/run_experiments.sh   # 只跑指定的臂
+PY=python3.12 ./scripts/run_experiments.sh         # 指定解释器
 ```
 
-其余段（`env` / `policy_model_cfg` / `verifier_cfg` / `run`）沿用上游 `evolving_main` 的既有形状，由上游的 `load_run_configuration` 解析。
+脚本在花掉第一次调用之前就拒绝三种错误启动：没有 `OPENAI_API_KEY`、held-out 跑在 adaptation 产物不存在时、未知的 phase。它还会把 `dashscope.aliyuncs.com` 加进 `NO_PROXY` —— 本机 SOCKS 代理曾拒绝约 25% 的连接，表现为**丢题而不是报错**（直连 0.38s，走代理 1.00s）。
+
+单独跑一个 run：
+
+```bash
+python -m alphaapollo.workflows.evo --config examples/configs/harness_adapt_evo.yaml
+```
+
+⚠️ flag 是 `--config`，**不是 `--config_path`**。`parse_known_args` 不会拒绝未知参数，它会把 `--config_path` 变成一条没人读的 override，于是 `--config` 取默认值、跑的是上游的 `evolving_main`，25 秒跑完 30 道 aime24 题、零次模型调用、最后一行还写着 "Finished run"。
+
+### 7.5 配置文件
+
+七份，一份基座 + 六份 overlay，用的是上游自带的 `base_config:` 继承（`utils.load_run_configuration` → `_apply_base_config`），不是本项目发明的机制：
+
+```
+examples/configs/
+├── harness_base.yaml                 # 三臂共享的 solver 环境
+├── harness_adapt_{baseline,raw,evo}.yaml
+└── harness_heldout_{baseline,raw,evo}.yaml
+```
+
+每份 overlay 只写让这条臂成为这条臂的东西，所以 `diff harness_adapt_baseline.yaml harness_adapt_evo.yaml` 显示的就是实验操作本身。`tests/harness/test_configs.py` 钉死了六份配置**共享同一套 solver 环境**、`raw` 与 `evo` 拿到**逐字相同的注入预算**、以及没有任何一份含有 key —— 公平性从声明变成了可验证事实。
+
+> `entrypoint_module` 在六份 overlay 里各写一遍而**不是**继承自基座：`api.evo` 用一个**不做 `base_config` 合并**的 `OmegaConf.load` 来挑驱动器（`workflows/api.py:239`），只写在基座里的话，每一次运行都会静默地跑成上游的 `evolving_main`。
+
+#### 可以调的参数
+
+**`harness:` 段**（由 `evolving_harness_main.run()` 读取）
+
+| 键 | 默认 | 说明 |
+|---|---|---|
+| `arm` | — | `baseline` \| `raw` \| `evo` |
+| `stream_path` | — | 题流 parquet |
+| `run_dir` | — | 本次 run 的全部产物：`metrics.jsonl` / `progress.json` / `trajectories/` |
+| `store_root` | — | skill store（`evo`）或经验池（`raw`）；`baseline` 不设 |
+| `batch_size` | 8 | **协议旋钮**：harness 多久能变一次 |
+| `max_workers` | 5 | **吞吐旋钮**：同时跑几道题。与 `batch_size` 完全独立 |
+| `frozen` | false | held-out 阶段为 true：只选择注入，不再增删改 |
+| `seed` | 1234 | 注入每一次请求；DashScope 的 seed 是 best-effort，**不保证复现** |
+| `feedback_level` | standard | `standard` \| `minimal`（verifier 反馈质量消融） |
+| `save_trajectories` | true | 每题约 62KB |
+| `caps` | `{general: 5, per_topic: 5}` | 增长上限。**仅 `evo`** |
+| `budget` | `{b: 6, general_max: 3, topic_max: 4, tokens: 800}` | 注入预算。`raw` 与 `evo` 必须相同 |
+| `mgmt_model_overrides` | `reflect: {temperature: 0.3}`<br>`curator: {temperature: 0.0}` | 管理侧采样。在 solver 的 0.7 上做 curation 意味着同一候选每次裁决不同 |
+| `selector_model_cfg` | `qwen3-32b` @ 0.0 | 选择用的模型。论文用比 solver 更强的模型 |
+| `extra_body` | `{enable_thinking: false}` | DashScope qwen3 必需；指向 vLLM 时删掉 |
+| `wandb` | `{enabled: true, ...}` | 可选。每张图都能仅凭 `metrics.jsonl` 离线重画 |
+
+**solver 环境**（`env:` / `policy_model_cfg` / `verifier_cfg` / `run:`）沿用上游形状，全部在 `harness_base.yaml` 里，**三臂必须逐字相同**。其中三项刻意偏离上游 `vllm_informal_math.yaml`，每项都有 20 题实测支撑（产物在 `docs/findings/diagnostics/`）：
+
+| | 上游 | 本项目 | 实测依据 |
+|---|---|---|---|
+| `evolving_round` | 10 | **2** | 10 得 4/20，与 2 相同，3.9× 调用 |
+| `verifier_env_num` | 5 | **1** | 5 得 4/20，与 1 相同，2.0× 调用。100 个题次里**零**次"对改错"，多数判决没有作用面 |
+| `max_tokens` | 8192 | 8192 | 唯一有效的旋钮（+2 题），且比 2048 **更便宜**（不截断 → 不重试） |
+
+#### 断点续跑
+
+每个 phase 从自己的 `progress.json` 按**批**恢复。按批而不按题，是因为 `end_batch` 是唯一的提交点：第 5 批跑到一半崩了，store 里是第 4 批的状态，协议正确的恢复点是第 5 批开头。崩溃前写下的部分行会先被清掉再重跑，否则那几道题会被双计。
+
+指纹（stream / arm / batch_size / seed / frozen）不匹配时**拒绝启动**而不是从头开始 —— 前者会覆盖一次真实的 run，后者会把两个实验拼在一起。`max_workers` 不在指纹里：限流之后换更小的并发接着跑，正是它该被允许的用法。
+
+### 7.6 出结果
+
+```bash
+python -m alphaapollo.core.harness.analysis --root ./outputs/harness --out_dir ./outputs/harness/report
+```
+
+写出 `results.md` 与 `results.json`，覆盖任务书要求的全部七项：
+
+| 要求 | 出处 |
+|---|---|
+| adaptation 上按区间的 success rate / Pass@1 | §1，窗口默认 25（`--window`）|
+| held-out 上最终 frozen harness 的准确率 | §2 |
+| 不同数学主题上的表现变化 | §3，逐臂逐 phase |
+| harness 的数量、长度与增长趋势 | §4，每批一行 |
+| 注入 context 的平均 token 与总调用量 | §5，solver / 管理**分开报** |
+| skills 被选择或使用的频率 | §6，按频次排序 |
+| 2-3 个正/负迁移案例 | §7，给出**候选**与要读的轨迹文件 |
+
+两个口径值得说明：
+
+**三臂在「全部成功跑完的题」的交集上比较。** 一道跑挂的题和一道答错的题都是 `pass_final == 0`，靠 `adapt/error` 区分。三臂并行打同一个 provider，会在同一场限流里丢**不同**的题；比较各自的原始比率就是在比较不同的题集。报告同时给出"各自题集上的比率"，因为两者不一致本身就是值得看见的发现。
+
+**迁移案例给的是候选，不是结论。** 一个迁移案例是"注入了技能之后模型做得有什么不同"的论证，需要人读轨迹。能自动化的是**找出哪几道题值得读** —— 即 evo 注入了技能、且结果与 baseline 在同一道题上相反的那些。正负两个方向都给，负向的甚至更重要。
+
+导出最终 harness 本身：
+
+```bash
+python -m alphaapollo.core.harness.export --store_root ./outputs/harness/adapt-evo/store --out_dir ./outputs/harness/export-evo
+# -> harness.md / summary.json / evolution.jsonl
+```
+
+`run_experiments.sh` 在 held-out 跑完后会自动执行这一步。
 
 wandb 是**可选**的（任务书从未要求）：六个 run（3 臂 × adaptation/held-out）共用一个 project，run name 默认 `<phase>-<arm>`、group 默认 phase，这样 dashboard 上三条臂才分得清、一个 phase 的三条臂才画在同一组轴上。每个图表都能仅凭 `<run_dir>/metrics.jsonl` 离线重画 —— jsonl 才是可复现的产物，wandb 只拿到一份副本。
 
@@ -720,16 +799,18 @@ WARNING: reflect failed for problem 8; skipping candidate
 
 以下内容**尚不存在**，请勿在任何地方当作已完成引用：
 
-1. **七个运行配置**（`harness_base.yaml` + 六个 arm/phase overlay）。`examples/configs/` 下目前**没有任何 harness 配置文件**。§7.4 展示的是驱动器实际读取的键，以及烟囱测试所用的 scratch 配置形状。
-2. **批量运行脚本**。
-3. **per-topic 的性能聚合**。`export.build_report` 目前报的是 harness 的 topic **构成**（`n_topic_by_topic`），**不是**按 topic 的通过率。
-4. **随时间的适应曲线聚合**。逐题数据已经写进 `metrics.jsonl`，但没有任何代码把它变成任务书要的那条曲线。
-5. **held-out 准确率数字**。
-6. **迁移案例抽取**（任务书要 2–3 个正/负迁移案例）。§8 的烟囱 trace 只是机制演示，不构成迁移案例。
-7. **三组 Task C 实验，全部**。
-8. **Slides。**
+1. **三组 Task C 实验，全部。** 本文档里没有任何一个实验结果数字。§8 的 trace 是烟囱测试，`docs/findings/diagnostics/` 里的五个 run 是参数诊断 —— 两者都不是 Task C。
+2. **Slides。**
+
+基础设施部分已经就绪（§7.4–7.6）：七份配置、运行脚本、断点续跑、轨迹落盘、以及覆盖任务书七项要求的分析器。它们**跑通过真机**，但只跑过 8–20 题的小规模验证。
 
 以及一项已知的文档欠债（§10.5）：设计文档 `docs/design/cross-problem-skill-harness-design.md` 部分过时。（`run()` docstring 与 `problem_shape` 两项已在 `474de1b` 处理。）
+
+### 11.1 会影响结论解读的两件事
+
+**噪声底是 ±2 题 / 20 题。** 同一份配置重跑两次，final 总数一样但**有 2 道题翻转**（`docs/findings/diagnostics/`，diagA vs diagA2）。折到 149 题约 ±3.6 个百分点。**arm 之间若只差 2–3 个百分点，单 seed 分不出来** —— 论文自己也是 3 次取平均（Appendix F）。算力预算必须为多 seed 留份额。
+
+**seed 不给可复现性。** seed 确实注入了每一次请求（日志里没有 provider 拒绝的警告），但 DashScope 的 seed 是 best-effort：两个 policy 生成参数完全相同的 run，round-0 结果仍会在个别题上不一致。**不要把"三臂 round-0 应逐题一致"写成断言** —— 那会是一个必然误报的 gate。
 
 ---
 
