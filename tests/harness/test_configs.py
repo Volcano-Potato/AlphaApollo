@@ -154,3 +154,24 @@ def test_every_config_routes_to_the_harness_driver_not_upstreams(name):
 
     cfg = load_config(str(CONFIG_DIR / f"harness_{name}.yaml"))
     assert cfg.get("entrypoint_module", "").endswith("evolving_harness_main")
+
+
+# --- management-side sampling ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", ALL_RUNS)
+def test_management_roles_never_inherit_the_solvers_sampling_temperature(name):
+    """Curating at the solver's 0.7 means the same candidate draws a different verdict each time
+    it is seen: the harness stops being a function of the problem stream, and two arms built from
+    one stop being comparable. The reference implementation curates at 0.0 and proposes at 0.3.
+    """
+    harness = load(name)["harness"]
+    overrides = harness["mgmt_model_overrides"]
+    assert overrides["curator"]["temperature"] == 0.0
+    assert overrides["reflect"]["temperature"] == 0.3
+    assert load(name)["policy_model_cfg"]["temperature"] == 0.7, "the solver keeps its own"
+
+
+@pytest.mark.parametrize("name", ("adapt_evo", "heldout_evo"))
+def test_selection_runs_deterministically_too(name):
+    assert load(name)["harness"]["selector_model_cfg"]["temperature"] == 0.0

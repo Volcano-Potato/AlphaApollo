@@ -551,3 +551,62 @@ def test_adversarial_a_topic_curator_cannot_hop_between_topics(tmp_path):
     assert record["accepted"] is False
     assert record["reject_reason"] == "wrong_layer"
     assert store.all()[0].trigger != "OVERWRITTEN"
+
+
+# --- candidate text survives the decision that rejected it ---------------------------------
+
+
+def test_every_log_line_carries_the_candidate_text_behind_it(tmp_path):
+    store = SkillStore(tmp_path / "s", caps=Caps(general=5, per_topic=5))
+    apply(store, [add(1)])
+    line = json.loads(store.harness_log.read_text().splitlines()[0])
+    assert line["candidate"]["lesson"] == "- Lesson 1."
+    assert line["candidate"]["trigger"] == "Trigger 1."
+    assert line["candidate"]["failure_mode"] == "Avoid 1."
+    assert line["candidate"]["scope_hint"] == "topic"
+    assert line["candidate"]["evidence"] == ["p_1"]
+
+
+def test_a_rejected_candidates_text_is_recorded_not_just_its_verdict(tmp_path):
+    """This is the case the field exists for. An accepted candidate keeps its text in the skill
+    file; a rejected one existed only in memory, and reconstructing it later costs a full re-run.
+    """
+    store = SkillStore(tmp_path / "s", caps=Caps(general=5, per_topic=1))
+    apply(store, [add(1)])                      # fills the single topic slot
+    records = apply(store, [add(2)])            # rejected: no room
+    assert records[0]["accepted"] is False
+    rejected = json.loads(store.harness_log.read_text().splitlines()[-1])
+    assert rejected["accepted"] is False
+    assert rejected["candidate"]["lesson"] == "- Lesson 2.", \
+        "the text the curator proposed and the store refused must outlive the call"
+
+
+def test_a_skipped_candidate_keeps_its_text_too(tmp_path):
+    """SKIP is the curator declining a proposal -- the single most interesting rejection to be
+    able to read back, since it is the curator's judgement rather than a capacity limit."""
+    store = SkillStore(tmp_path / "s", caps=Caps(general=5, per_topic=5))
+    apply(store, [SkillEdit(op="SKIP", actor="topic_curator", reason="too vague",
+                            payload=cand(3))])
+    line = json.loads(store.harness_log.read_text().splitlines()[0])
+    assert line["op"] == "SKIP" and line["candidate"]["lesson"] == "- Lesson 3."
+
+
+def test_an_edit_with_no_candidate_behind_it_logs_a_null_rather_than_omitting_the_key(tmp_path):
+    """DELETE is harness maintenance, not a response to a proposal. Every line keeps one shape
+    so downstream analysis never has to special-case a missing key."""
+    store = SkillStore(tmp_path / "s", caps=Caps(general=5, per_topic=5))
+    apply(store, [add(1)])
+    apply(store, [SkillEdit(op="DELETE", actor="topic_curator", reason="stale",
+                            skill_id="sk_0001")])
+    line = json.loads(store.harness_log.read_text().splitlines()[-1])
+    assert "candidate" in line and line["candidate"] is None
+
+
+def test_the_candidate_record_never_carries_a_question_or_an_answer(tmp_path):
+    """The log is an audit trail, not a second channel into the method -- but it is written from
+    the same apply() call that receives question_texts and ground_truths for leak checking, so
+    this pins that none of that leaks into the record."""
+    store = SkillStore(tmp_path / "s", caps=Caps(general=5, per_topic=5))
+    apply(store, [add(1)])
+    line = store.harness_log.read_text()
+    assert QUESTIONS[0] not in line and GTS[0] not in line

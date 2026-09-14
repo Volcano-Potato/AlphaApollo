@@ -156,3 +156,34 @@ def test_prepare_resume_touches_nothing_on_a_fresh_run(tmp_path):
     plan = prepare_resume(tmp_path, fp=FP, batch_size=4, partial_logs={str(metrics): "step"})
     assert plan.is_fresh
     assert metrics.read_text() == before, "a fresh run must never truncate a pre-existing log"
+
+
+# --- per-problem error flag (see evolving_harness_main's step-4 comment) ---------------------
+
+
+def test_a_dead_problem_is_distinguishable_from_a_wrong_answer(tmp_path):
+    """Both degrade to pass_final == 0. Without the flag the three arms cannot be compared on
+    the intersection of problems all of them actually completed, and a rate-limit storm that
+    hits them unevenly silently biases the headline number."""
+    import tests.harness.test_driver as td
+    from alphaapollo.core.generation.evolving.evolving_harness_main import run_stream
+    from alphaapollo.core.harness.accounting import CallAccountant
+    from alphaapollo.core.harness.arms import BaselineArm
+    from alphaapollo.core.harness.tracker import HarnessTracker
+
+    def dies_on_two(problem_idx, problem, runtime):
+        if problem_idx == 2:
+            raise RuntimeError("rate limited")
+        return td.fake_run_problem(problem_idx, problem, runtime)
+
+    run_stream(problems=td.problems(8), arm=BaselineArm(),
+               runtime_factory=td.runtime_factory, run_problem_fn=dies_on_two,
+               tracker=HarnessTracker(tmp_path, enabled=False), accountant=CallAccountant(),
+               batch_size=8, max_workers=4)
+
+    rows = {r["step"]: r for r in
+            (json.loads(line) for line in (tmp_path / "metrics.jsonl").read_text().splitlines())
+            if "adapt/error" in r}
+    assert rows[2]["adapt/error"] == 1 and rows[2]["adapt/pass_final"] == 0
+    assert rows[1]["adapt/error"] == 0
+    assert sum(r["adapt/error"] for r in rows.values()) == 1

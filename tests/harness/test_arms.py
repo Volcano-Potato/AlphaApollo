@@ -607,3 +607,31 @@ def test_cross_problem_state_size_counts_what_was_loaded(tmp_path):
     first.end_batch(0)
 
     assert RawExperienceArm(agent=ScriptedAgent([]), pool_root=tmp_path / "raw").cross_problem_state_size() == 1
+
+
+# --- proposal and curation are sampled differently, so they are separate agents --------------
+
+
+def test_reflect_and_the_curators_use_different_agents_when_one_is_supplied(tmp_path):
+    """`Agent` fixes its temperature at construction, so "propose at 0.3, curate at 0.0" (what
+    the reference implementation does) can only be expressed as two instances. Curating at the
+    solver's 0.7 would mean the same candidate draws a different verdict each time it is seen.
+    """
+    proposer = ScriptedAgent([REFLECTION])
+    curator = ScriptedAgent(["ADD: 1\nREASON: generalises", "NO_PATTERNS"])
+    arm = EvoHarnessArm(store_root=tmp_path / "split", agent=proposer, curator_agent=curator)
+
+    arm.begin_batch(0)
+    arm.observe(PROBLEM, FAILED)
+    arm.end_batch(0)
+
+    assert len(proposer.prompts) == 1, "only Reflect may reach the proposing agent"
+    assert len(curator.prompts) == 2, "both curators must reach the curating agent"
+    assert arm.store.all(), "the split must not break the pipeline it splits"
+
+
+def test_curator_agent_defaults_to_the_proposing_agent(tmp_path):
+    """A single-model setup, and every test written before the split, must keep working."""
+    agent = ScriptedAgent([REFLECTION, "ADD: 1\nREASON: x", "NO_PATTERNS"])
+    arm = EvoHarnessArm(store_root=tmp_path / "one", agent=agent)
+    assert arm.curator_agent is agent

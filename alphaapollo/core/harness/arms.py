@@ -380,8 +380,16 @@ class EvoHarnessArm(CrossProblemArm):
     """
 
     def __init__(self, *, store_root, agent, caps: Caps | None = None, budget: Budget | None = None,
-                 feedback_level: str = "standard", frozen: bool = False, selector_agent=None):
+                 feedback_level: str = "standard", frozen: bool = False, selector_agent=None,
+                 curator_agent=None):
         self.store = SkillStore(store_root, caps=caps, budget=budget)
+        # `agent` proposes (Reflect); `curator_agent` decides. They are separate because the
+        # reference implementation samples them differently -- propose at 0.3, curate at 0.0 --
+        # and `Agent` fixes its temperature per instance. Curating at the solver's 0.7 would mean
+        # the same candidate draws a different verdict each time it is seen, which destroys both
+        # the reproducibility of a harness and the comparability of two arms built from one.
+        # Defaults to `agent` so a single-model setup, and every existing test, still works.
+        self.curator_agent = curator_agent if curator_agent is not None else agent
         self.agent = agent
         # The paper runs selection on a stronger model than the solver (Appendix F: Claude Sonnet
         # 4.5 "for harness selection ... across all experiments"). Defaults to `agent` so a
@@ -493,13 +501,13 @@ class EvoHarnessArm(CrossProblemArm):
         # skill content before `apply()` runs in the same `end_batch()`.
         for topic, topic_candidates in by_topic.items():
             existing = [s for s in self.store.all() if s.level == "topic" and s.topic == topic]
-            edits.extend(TopicCurator().curate(self.agent, existing=existing,
+            edits.extend(TopicCurator().curate(self.curator_agent, existing=existing,
                                                 candidates=topic_candidates, caps=self.store.caps,
                                                 topic=topic))
 
         # 3. All of this batch's candidates -> GeneralCurator (cross-topic layer).
         existing_general = [s for s in self.store.all() if s.level == "general"]
-        edits.extend(GeneralCurator().curate(self.agent, existing=existing_general,
+        edits.extend(GeneralCurator().curate(self.curator_agent, existing=existing_general,
                                               candidates=candidates, caps=self.store.caps))
 
         if not edits:

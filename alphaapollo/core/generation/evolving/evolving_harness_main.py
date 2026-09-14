@@ -538,7 +538,17 @@ def run_stream(
 
             arm.record_selection(problem, result)
             arm.observe(problem, result)
-            tracker.log(step, {"adapt/pass1_round0": result["pass1_round0"], "adapt/pass_final": result["pass_final"]})
+            # `adapt/error` is what keeps a dead problem distinguishable from a wrong answer.
+            # Both degrade to pass_final == 0, so without this flag the two are identical in the
+            # record -- and the three arms run concurrently against one provider, so they lose
+            # *different* problems to the same rate-limit storm. A few silently-lost problems
+            # bias one arm's rate by several points, against a measured noise floor of ~3.6
+            # points at n=149: large enough to invent or erase the effect being measured.
+            # With the flag, the arms can be compared on the intersection of problems all three
+            # actually completed, which is the only fair comparison available.
+            tracker.log(step, {"adapt/pass1_round0": result["pass1_round0"],
+                               "adapt/pass_final": result["pass_final"],
+                               "adapt/error": int(kind == "error")})
 
         # Step 5 -- only now may the harness/pool actually change. A misbehaving arm's own
         # end_batch() failing must not take down the rest of the adaptation stream (the
@@ -633,9 +643,19 @@ def run(config: str | None = None) -> None:
     # as the policy so a single-model setup needs no extra block; `harness.selector_model_cfg`
     # overrides it for selection alone, which is what the paper does (Appendix F: Claude Sonnet
     # 4.5 "for harness selection ... across all experiments", a stronger model than the solver).
-    mgmt_agent = Agent(cfg_bundle["policy_model_cfg"])
+    # Three management roles, three sampling settings, one model -- matching the reference
+    # implementation (propose 0.3, curate 0.0, select 0.0). They are distinct `Agent` objects
+    # only because `Agent` fixes its temperature at construction; `harness.mgmt_model_overrides`
+    # carries just the deltas so the model, base_url and key are stated once.
+    def _mgmt_agent(role: str) -> Any:
+        cfg = dict(cfg_bundle["policy_model_cfg"])
+        cfg.update((harness_cfg.get("mgmt_model_overrides") or {}).get(role) or {})
+        return Agent(cfg)
+
+    mgmt_agent = _mgmt_agent("reflect")
+    curator_agent = _mgmt_agent("curator")
     selector_cfg = harness_cfg.get("selector_model_cfg")
-    selector_agent = Agent(selector_cfg) if selector_cfg else mgmt_agent
+    selector_agent = Agent(selector_cfg) if selector_cfg else _mgmt_agent("curator")
     arm_name = harness_cfg["arm"]
     if arm_name == "baseline":
         arm = build_arm(arm_name)
@@ -650,6 +670,7 @@ def run(config: str | None = None) -> None:
             store_root=harness_cfg["store_root"],
             agent=mgmt_agent,
             selector_agent=selector_agent,
+            curator_agent=curator_agent,
             caps=Caps(**(harness_cfg.get("caps") or {})),
             budget=Budget(**(harness_cfg.get("budget") or {})),
             feedback_level=harness_cfg.get("feedback_level", "standard"),

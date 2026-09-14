@@ -104,6 +104,21 @@ harness:
     general_max: 3
     topic_max: 4
     tokens: 800
+  # Management-side sampling. Same model as the solver, different temperature -- which is what
+  # the reference implementation does (propose 0.3, curate 0.0, select 0.0), and which `Agent`
+  # can only express as separate instances since it fixes temperature per object.
+  #
+  # Leaving these at the solver's 0.7, as an earlier version did, means a curator hands down a
+  # different verdict on the same candidate each time it sees it: the harness stops being a
+  # function of the problem stream, and two arms built from it stop being comparable. The
+  # proposal step keeps a little randomness (0.3) because it is generating, not adjudicating.
+  mgmt_model_overrides:
+    reflect:
+      temperature: 0.3
+      max_tokens: 1024
+    curator:
+      temperature: 0.0
+      max_tokens: 4096
   wandb:
     enabled: true
     project: alphaapollo-evo-harness

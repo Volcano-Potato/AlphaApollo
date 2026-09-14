@@ -96,6 +96,39 @@ _MAX_SLUG_WORDS = 8
 _EVIDENCE_TAG = re.compile(r"^p_(\d+)$")
 
 
+def _candidate_record(edit: SkillEdit) -> dict | None:
+    """The proposed text behind ``edit``, so a rejected candidate survives the call that rejected it.
+
+    ``harness_log.jsonl`` already recorded *the decision* -- op, actor, accepted, reject_reason,
+    the curator's stated reason. It did not record *what was decided about*. For an accepted
+    candidate that is merely redundant (the skill file holds the text); for a **rejected** one the
+    content existed only in memory and was gone the moment ``apply()`` returned.
+
+    That gap is not recoverable after a run: reconstructing it costs a full re-run. It also
+    understates the assignment's requirement, which asks for "产生了哪些候选更新" -- the candidate
+    updates themselves, not only their verdicts. And it is the exact gap that made the
+    vacuous-skill investigation expensive: answering "what is the curator actually rejecting?"
+    required rebuilding candidate pools by hand and re-running, where one query over this field
+    would have done.
+
+    ``None`` for edits with no candidate behind them (``DELETE`` is harness maintenance, not a
+    response to a proposal), rather than an omitted key -- every log line keeps one shape.
+    """
+    payload = edit.payload
+    if payload is None:
+        return None
+    return {
+        "trigger": payload.trigger,
+        "lesson": payload.lesson,
+        "failure_mode": payload.failure_mode,
+        "scope_hint": payload.scope_hint,
+        "topic": payload.topic,
+        "action_hint": payload.action_hint,
+        "target_id": payload.target_id,
+        "evidence": list(payload.evidence),
+    }
+
+
 def _source_problems(edit: SkillEdit) -> list[int]:
     """Which problems' failures produced the candidate behind ``edit``.
 
@@ -326,7 +359,8 @@ class SkillStore:
                           "reject_reason": f"internal_error:{type(exc).__name__}", "guard_note": None}
             record.update(problem_idx=problem_idx, batch=batch, op=edit.op,
                           actor=edit.actor, reason=edit.reason,
-                          source_problems=_source_problems(edit))
+                          source_problems=_source_problems(edit),
+                          candidate=_candidate_record(edit))
             self.log_event(**record)
             results.append(record)
         return results
