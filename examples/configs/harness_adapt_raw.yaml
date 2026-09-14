@@ -1,0 +1,29 @@
+# Arm 2 of 3 -- Raw Experience: stores past trajectories' direct summaries and selects from them,
+# with no compilation, curation, deduplication or budgeted growth.
+#
+# This arm exists in the assignment, not in the Evo-Harness paper (whose baselines are AWM,
+# Dynamic Cheatsheet, Evo-Memory, ACE, XSkill and No-Evolve). Its parameters therefore come from
+# neither paper -- they come from the fairness constraint: it receives byte-identical injection
+# budget to the Evo arm, inherited from harness_base.yaml and never overridden here. Otherwise
+# the comparison would measure "more context" instead of "better context".
+#
+# Its summarizer calls are accounted under the `raw_summarizer` management role, so its overhead
+# is reported separately rather than hidden inside the solver total.
+# Repeated here, not inherited: `api.evo` picks the driver with a plain OmegaConf.load that
+# does NOT apply `base_config` (workflows/api.py:239 vs utils.load_run_configuration). Left in
+# the base alone, every run silently launches upstream's evolving_main instead.
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+
+base_config: harness_base.yaml
+
+harness:
+  arm: raw
+  frozen: false
+  stream_path: ./data/harness/adaptation.parquet
+  run_dir: ./outputs/harness/adapt-raw
+  store_root: ./outputs/harness/adapt-raw/pool
+  wandb:
+    group: adapt
+    run_name: adapt-raw
+run:
+  tag: adapt-raw

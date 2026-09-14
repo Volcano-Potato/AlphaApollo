@@ -1,0 +1,36 @@
+# Arm 3 of 3 -- Evo-Harness: the Task A/B mechanism. Reflect turns a finished rollout into
+# candidate skills; two curators (topic and general) apply ADD/MERGE/REVISE/SKIP under a fixed
+# budget; the updated harness is selected from for later problems only.
+#
+# `caps` is the only block the other two arms do not have, and the growth bound the assignment
+# requires. Paper default (Appendix F) is 5 general + 5 per topic; kept as shipped.
+# Repeated here, not inherited: `api.evo` picks the driver with a plain OmegaConf.load that
+# does NOT apply `base_config` (workflows/api.py:239 vs utils.load_run_configuration). Left in
+# the base alone, every run silently launches upstream's evolving_main instead.
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+
+base_config: harness_base.yaml
+
+harness:
+  arm: evo
+  frozen: false
+  stream_path: ./data/harness/adaptation.parquet
+  run_dir: ./outputs/harness/adapt-evo
+  store_root: ./outputs/harness/adapt-evo/store
+  caps:
+    general: 5
+    per_topic: 5
+  # Selection is the one place the paper uses a stronger model than the solver (Appendix F:
+  # Claude Sonnet 4.5 "for harness selection ... across all experiments"). Here the same family
+  # one size up; its calls are accounted under the `selector` management role.
+  selector_model_cfg:
+    api_key: ""
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    model_name: qwen3-32b
+    temperature: 0.0
+    max_tokens: 512
+  wandb:
+    group: adapt
+    run_name: adapt-evo
+run:
+  tag: adapt-evo

@@ -435,6 +435,9 @@ def run_stream(
     accountant: Any,
     batch_size: int = 8,
     max_workers: int = 8,
+    start_batch: int = 0,
+    on_batch_complete: Callable[[int], None] | None = None,
+    trajectory_sink: Callable[[int, dict], None] | None = None,
 ) -> dict:
     """Run ``problems`` to completion against ``arm``'s cross-problem mechanism, batch-serial /
     within-batch-parallel (see module docstring for the five-step protocol).
@@ -448,6 +451,22 @@ def run_stream(
 
     Trailing problems that do not fill a whole batch are dropped (``loader.batches``), so
     ``n_problems`` in the returned summary can be smaller than ``len(problems)``.
+
+    ``start_batch`` skips that many leading batches outright -- the resume path (see
+    ``harness.resume``, which owns the decision about *which* batch that is and the cleanup of
+    whatever partial rows the aborted batch left behind). Skipped batches consume no budget and,
+    critically, do not call ``arm.begin_batch``/``end_batch``: the arm's state already reflects
+    them, having been reloaded from disk.
+
+    ``on_batch_complete(batch_idx)`` fires once a batch is durably finished -- after
+    ``end_batch`` has committed any harness change and after that batch's metrics are logged --
+    and is how the resume marker advances. It is deliberately *not* called for a batch whose
+    ``end_batch`` raised: that batch's harness update did not happen, so resuming past it would
+    skip the update permanently.
+
+    ``trajectory_sink(problem_idx, payload)`` receives each successful rollout for archival (see
+    ``harness.trajectory``). It is called inside the serial step-4 loop, never from a worker
+    thread, so a sink writing to one directory needs no locking.
     """
     n_problems = 0
     n_errors = 0
@@ -463,6 +482,10 @@ def run_stream(
             return run_problem_fn(problem_idx, problem, runtime)
 
     for batch_idx, batch in enumerate(batches(problems, batch_size)):
+        if batch_idx < start_batch:
+            continue
+        is_first_executed_batch = batch_idx == start_batch
+
         arm.begin_batch(batch_idx)
 
         # Step 2 -- serial, arm-mutating (system_prompt_for may update selection bookkeeping):
@@ -487,7 +510,10 @@ def run_stream(
         # Circuit breaker: a first batch with nothing but failures is a broken configuration, and
         # every downstream stage is built to survive exactly this, which is what makes it
         # invisible. Tripped before step 4 so no management budget is spent reflecting on it.
-        if batch_idx == 0 and all(kind == "error" for kind, _ in outcomes):
+        # Keyed to the first batch *this process* executes, not literally batch 0: a resumed run
+        # is a new process with its own credentials, proxy and stream file, so it needs the same
+        # proof-of-life before it is allowed to spend hours degrading every problem to zeros.
+        if is_first_executed_batch and all(kind == "error" for kind, _ in outcomes):
             first_error = outcomes[0][1]
             raise StreamAbort(f"every problem in the first batch failed; the run is misconfigured, not flaky. First error: {first_error!r}") from first_error
 
@@ -504,6 +530,10 @@ def run_stream(
                 # LeakageError from a poisoned action inside the payload propagates from here,
                 # uncaught, aborting the whole stream -- see module/function docstring.
                 result = extract_result(payload.get("problem_payload", {}))
+                # Archived before anything downstream can fail, so a rollout that triggers a bug
+                # in observe/Reflect is still on disk to debug against.
+                if trajectory_sink is not None:
+                    trajectory_sink(step, payload.get("problem_payload", {}))
             n_problems += 1
 
             arm.record_selection(problem, result)
@@ -516,15 +546,24 @@ def run_stream(
         # it gets the same log-and-continue treatment as an individual solver failure; every arm
         # shipped in `arms.py` already degrades to a no-op edit list internally, so this is a
         # second line of defense against a future/foreign arm implementation, not the primary one.
+        batch_committed = True
         try:
             arm.end_batch(batch_idx)
         except Exception:
+            batch_committed = False
             logger.exception("arm.end_batch failed for batch %s; harness left unchanged for this batch", batch_idx)
 
         last_step = batch[-1]["problem_idx"]
         if hasattr(arm, "store"):
             tracker.log_harness_state(last_step, arm.store)
         tracker.log_accounting(last_step, accountant)
+
+        # Last thing in the iteration, and only for a batch that actually committed. Advancing
+        # past a batch whose end_batch raised would drop that batch's harness update for good --
+        # a resumed run would never revisit it, and the harness would silently be missing
+        # everything those problems should have taught it.
+        if on_batch_complete is not None and batch_committed:
+            on_batch_complete(batch_idx)
 
     return {"n_problems": n_problems, "n_errors": n_errors}
 
@@ -571,8 +610,10 @@ def run(config: str | None = None) -> None:
     from alphaapollo.core.harness.accounting import CallAccountant, install_accounting
     from alphaapollo.core.harness.arms import build_arm
     from alphaapollo.core.harness.loader import load_stream
+    from alphaapollo.core.harness.resume import fingerprint, prepare_resume, write_progress
     from alphaapollo.core.harness.store import Budget, Caps
     from alphaapollo.core.harness.tracker import HarnessTracker
+    from alphaapollo.core.harness.trajectory import save_trajectory
 
     cfg_bundle = load_run_configuration(config)
     full_cfg = OmegaConf.to_container(cfg_bundle["cfg"], resolve=True)
@@ -637,6 +678,30 @@ def run(config: str | None = None) -> None:
     accountant = CallAccountant()
     uninstall = install_accounting(accountant, seed=harness_cfg.get("seed"), extra_body=harness_cfg.get("extra_body"))
 
+    # Resume planning happens after the tracker exists (so its metrics.jsonl can be truncated)
+    # but before a single call is billed. A fingerprint mismatch raises out of here, which is the
+    # intended behaviour -- see `resume.plan_resume`.
+    run_dir = harness_cfg.get("run_dir", "./outputs/harness")
+    batch_size = int(harness_cfg.get("batch_size", 8))
+    # Every log an aborted batch could have written per-problem rows into. Both arms record a
+    # selection per problem in step 4; their batch-committed artifacts (skills/, harness_log,
+    # pool.jsonl) are written only by end_batch and so need no truncation.
+    partial_logs = {str(tracker.metrics_path): "step"}
+    if getattr(arm, "store", None) is not None:
+        partial_logs[str(arm.store.selection_log)] = "problem_idx"
+    if getattr(arm, "pool_root", None) is not None:
+        partial_logs[str(arm.pool_root / "selection_log.jsonl")] = "problem_idx"
+    plan = prepare_resume(run_dir, fp=fingerprint(harness_cfg), batch_size=batch_size,
+                          partial_logs=partial_logs)
+
+    def on_batch_complete(batch_idx: int) -> None:
+        write_progress(run_dir, completed_batches=batch_idx + 1, fp=fingerprint(harness_cfg))
+
+    save_trajectories = bool(harness_cfg.get("save_trajectories", True))
+
+    def trajectory_sink(problem_idx: int, payload: dict) -> None:
+        save_trajectory(run_dir, problem_idx, payload)
+
     def runtime_factory(system_prompt: str) -> dict:
         # A fresh Agent per problem, not a shared one -- see the docstring above: problems within
         # the same batch run concurrently and may carry different injected text.
@@ -653,8 +718,11 @@ def run(config: str | None = None) -> None:
             run_problem_fn=upstream_run_problem,
             tracker=tracker,
             accountant=accountant,
-            batch_size=int(harness_cfg.get("batch_size", 8)),
+            batch_size=batch_size,
             max_workers=int(harness_cfg.get("max_workers", 8)),
+            start_batch=plan.start_batch,
+            on_batch_complete=on_batch_complete,
+            trajectory_sink=trajectory_sink if save_trajectories else None,
         )
         logger.info("evolving_harness_main.run finished: %s", summary)
     finally:

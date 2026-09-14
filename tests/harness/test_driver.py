@@ -733,3 +733,118 @@ def test_a_frozen_baseline_is_not_a_misconfiguration():
     """Baseline has no cross-problem state to load; `frozen` is meaningless for it, and tripping
     the guard would block the held-out baseline run the comparison needs."""
     assert_frozen_arm_has_state(BaselineArm(), arm_name="baseline", frozen=True, state_path=None)
+
+
+# --- resume, trajectory archival (crash recovery for a multi-hour run) ---------------------
+
+
+def test_start_batch_skips_the_leading_batches_entirely(tmp_path):
+    """A skipped batch must consume no budget and must not touch the arm: the arm's state
+    already reflects it, having been reloaded from disk."""
+    arm = RecordingArm()
+    ran = []
+
+    def counting_run_problem(problem_idx, problem, runtime):
+        ran.append(problem_idx)
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    summary = run_stream(problems=problems(24), arm=arm, runtime_factory=runtime_factory,
+                         run_problem_fn=counting_run_problem,
+                         tracker=HarnessTracker(tmp_path, enabled=False),
+                         accountant=CallAccountant(), batch_size=8, max_workers=4, start_batch=2)
+
+    assert ran == list(range(16, 24)), "only the third batch's problems may run"
+    assert summary["n_problems"] == 8
+    assert [e for e in arm.events if e[0] == "begin"] == [("begin", 2)]
+
+
+def test_the_circuit_breaker_arms_on_the_first_executed_batch_not_literally_batch_zero(tmp_path):
+    """A resumed run is a new process with its own credentials and proxy, so it needs the same
+    proof-of-life before it is allowed to spend hours writing zeros."""
+    def always_dies(problem_idx, problem, runtime):
+        raise RuntimeError("provider down")
+
+    with pytest.raises(StreamAbort):
+        run_stream(problems=problems(24), arm=BaselineArm(), runtime_factory=runtime_factory,
+                   run_problem_fn=always_dies, tracker=HarnessTracker(tmp_path, enabled=False),
+                   accountant=CallAccountant(), batch_size=8, max_workers=4, start_batch=2)
+
+
+def test_on_batch_complete_fires_once_per_batch_in_order(tmp_path):
+    done = []
+    run_stream(problems=problems(24), arm=RecordingArm(), runtime_factory=runtime_factory,
+               run_problem_fn=fake_run_problem, tracker=HarnessTracker(tmp_path, enabled=False),
+               accountant=CallAccountant(), batch_size=8, max_workers=4,
+               on_batch_complete=done.append)
+    assert done == [0, 1, 2]
+
+
+def test_on_batch_complete_does_not_fire_for_a_batch_whose_end_batch_raised(tmp_path):
+    """Advancing past an uncommitted batch would drop its harness update permanently -- a
+    resumed run never revisits it."""
+    class ExplodingEndBatch(RecordingArm):
+        def end_batch(self, batch_idx):
+            if batch_idx == 0:
+                raise RuntimeError("curator exploded")
+            return []
+
+    done = []
+    summary = run_stream(problems=problems(16), arm=ExplodingEndBatch(),
+                         runtime_factory=runtime_factory, run_problem_fn=fake_run_problem,
+                         tracker=HarnessTracker(tmp_path, enabled=False),
+                         accountant=CallAccountant(), batch_size=8, max_workers=4,
+                         on_batch_complete=done.append)
+    assert done == [1], "batch 0 never committed, so the marker may not advance past it"
+    assert summary["n_problems"] == 16, "the stream still continues -- only the marker holds back"
+
+
+def test_trajectory_sink_receives_every_successful_rollout(tmp_path):
+    seen = {}
+    run_stream(problems=problems(8), arm=BaselineArm(), runtime_factory=runtime_factory,
+               run_problem_fn=fake_run_problem, tracker=HarnessTracker(tmp_path, enabled=False),
+               accountant=CallAccountant(), batch_size=8, max_workers=4,
+               trajectory_sink=lambda idx, payload: seen.__setitem__(idx, payload))
+    assert sorted(seen) == list(range(8))
+    assert seen[0] is SIMPLIFIED_PAYLOAD
+
+
+def test_trajectory_sink_is_not_called_for_a_failed_problem(tmp_path):
+    """A failed problem has no payload; a sink called with the all-zero stand-in would write a
+    file that looks like a real rollout."""
+    def dies_on_three(problem_idx, problem, runtime):
+        if problem_idx == 3:
+            raise RuntimeError("boom")
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    seen = []
+    run_stream(problems=problems(8), arm=BaselineArm(), runtime_factory=runtime_factory,
+               run_problem_fn=dies_on_three, tracker=HarnessTracker(tmp_path, enabled=False),
+               accountant=CallAccountant(), batch_size=8, max_workers=4,
+               trajectory_sink=lambda idx, payload: seen.append(idx))
+    assert 3 not in seen and len(seen) == 7
+
+
+def test_a_failing_trajectory_sink_never_aborts_the_run(tmp_path):
+    """The run's real product is already on disk; an analysis artifact may not take it down."""
+    summary = run_stream(problems=problems(8), arm=BaselineArm(), runtime_factory=runtime_factory,
+                         run_problem_fn=fake_run_problem,
+                         tracker=HarnessTracker(tmp_path, enabled=False),
+                         accountant=CallAccountant(), batch_size=8, max_workers=4,
+                         trajectory_sink=save_trajectory_that_explodes)
+    assert summary["n_problems"] == 8
+
+
+def save_trajectory_that_explodes(problem_idx, payload):
+    from alphaapollo.core.harness.trajectory import save_trajectory
+    return save_trajectory("/proc/nonexistent-and-unwritable", problem_idx, payload)
+
+
+def test_saved_trajectory_round_trips_and_sorts_in_stream_order(tmp_path):
+    from alphaapollo.core.harness.trajectory import save_trajectory, trajectory_path
+    for idx in (0, 7, 12, 149):
+        save_trajectory(tmp_path, idx, SIMPLIFIED_PAYLOAD)
+    names = sorted(p.name for p in (tmp_path / "trajectories").iterdir())
+    assert names == ["problem_0000.json", "problem_0007.json", "problem_0012.json",
+                     "problem_0149.json"], "zero-padded so a plain listing is stream order"
+    restored = json.loads(trajectory_path(tmp_path, 7).read_text())
+    assert restored["step_outputs"][0]["policy_answer"] == "1"

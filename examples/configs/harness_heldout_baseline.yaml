@@ -1,0 +1,19 @@
+# Held-out evaluation, Baseline arm. One complete recent year (AIME 2025, 30 problems) that no
+# skill update has ever seen. Same solver environment as the adaptation phase, byte for byte.
+# Repeated here, not inherited: `api.evo` picks the driver with a plain OmegaConf.load that
+# does NOT apply `base_config` (workflows/api.py:239 vs utils.load_run_configuration). Left in
+# the base alone, every run silently launches upstream's evolving_main instead.
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+
+base_config: harness_base.yaml
+
+harness:
+  arm: baseline
+  frozen: true
+  stream_path: ./data/harness/heldout.parquet
+  run_dir: ./outputs/harness/heldout-baseline
+  wandb:
+    group: heldout
+    run_name: heldout-baseline
+run:
+  tag: heldout-baseline

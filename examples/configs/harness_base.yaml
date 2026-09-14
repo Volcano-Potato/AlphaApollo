@@ -1,0 +1,109 @@
+# Shared base for every Task C run. The six arm/phase overlays in this directory each set
+# `base_config: harness_base.yaml` and then override only what makes their arm their arm --
+# so `diff harness_adapt_baseline.yaml harness_adapt_evo.yaml` shows the experimental
+# manipulation and nothing else. The merge is upstream's own (`utils.load_run_configuration`
+# -> `_apply_base_config`), not a mechanism this project invented.
+#
+# Everything in this file is the *environment* the three arms share. The assignment requires
+# them to be identical on model, task order, in-problem evolution rounds, tools and generation
+# parameters; keeping those here rather than copied six times is what makes that checkable
+# rather than merely claimed.
+#
+# The three solver parameters below deliberately depart from AlphaApollo's shipped
+# `vllm_informal_math.yaml`, each on 20-problem measured evidence -- configs and per-problem
+# results in `docs/findings/diagnostics/`, analysis in `docs/findings/experiment-log.md`:
+#
+#   evolving_round: 2      upstream 10.  10 scored 4/20, identical to 2, at 3.9x the calls.
+#   verifier_env_num: 1    upstream 5.   5 scored 4/20, identical to 1, at 2.0x the calls.
+#                          Majority judgment has nothing to protect here: across 100
+#                          problem-runs, zero correct answers were ever revised to wrong.
+#   max_tokens: 8192       upstream 8192. The one knob that mattered (+2 problems) -- and it is
+#                          also *cheaper* than 2048, because truncated reasoning drives extra
+#                          retry rounds.
+#
+# The API key is never stored here. Every model block sets `api_key: ""` and the key is read
+# from the OPENAI_API_KEY environment variable at run time.
+
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+
+env:
+  name: informal_math_evolving
+  group_n: 1
+  config:
+    informal_math_evolving:
+      enable_verify: true
+      evolving_round: 2
+      log_requests: false
+      python_code_timeout: 60
+      concurrency:
+        problem_max_workers: 0
+        verifier_max_workers: 1
+      nd_memory:
+        scored_history_length: 3
+      # The in-problem solution memory. Untouched by this project -- the cross-problem harness
+      # is a separate mechanism that never reads or writes it (enforced by the import guard in
+      # tests/harness/test_smoke.py).
+      policy_env:
+        enable_python_code: true
+        history_length: 4
+        max_steps: 4
+        memory_type: simple
+      verifier_env:
+        enable_python_code: true
+        history_length: 4
+        max_steps: 4
+        memory_type: simple
+
+policy_model_cfg:
+  api_key: ""
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model_name: qwen3-8b
+  temperature: 0.7
+  max_tokens: 8192
+  system_prompt: ""   # replaced per problem by the arm; see arms.py
+
+verifier_cfg:
+  api_key: ""
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model_name: qwen3-8b
+  temperature: 0.4
+  max_tokens: 8192
+  system_prompt: ""
+
+vllm_config:
+  api_key: ""
+  base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+  model_name: qwen3-8b
+
+preprocess: []
+
+run:
+  data_root: ./data/math-ai/
+  dataset_name: aime24
+  file_name: test.parquet
+  policy_env_num: 1
+  verifier_env_num: 1
+  test_times: 1
+  tag: harness
+
+harness:
+  # Protocol granularity: a problem may only be influenced by skills compiled from *earlier*
+  # batches. Independent of max_workers, which is throughput only.
+  batch_size: 8
+  max_workers: 5
+  seed: 1234
+  feedback_level: standard
+  save_trajectories: true
+  extra_body:
+    enable_thinking: false   # DashScope rejects non-streaming qwen3 calls without this
+  # Injection budget. Shared by the Evo and Raw arms verbatim: the experiment asks whether
+  # compiled skills beat raw history, so the two must differ in *what* is injected, never in
+  # *how much*. Pinned by test_raw_experience_respects_the_same_token_budget_as_evo.
+  budget:
+    b: 6
+    general_max: 3
+    topic_max: 4
+    tokens: 800
+  wandb:
+    enabled: true
+    project: alphaapollo-evo-harness

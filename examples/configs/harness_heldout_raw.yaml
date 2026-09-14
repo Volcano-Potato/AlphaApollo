@@ -1,0 +1,25 @@
+# Held-out evaluation, Raw Experience arm, against the final frozen pool.
+#
+# `store_root` points at a *copy* made by scripts/run_experiments.sh, never at the adaptation
+# run's own directory: a held-out run must not be able to append to the artifact it is
+# evaluating. `frozen: true` also makes the driver refuse to start if that copy turned up empty
+# (assert_frozen_arm_has_state) -- a frozen arm with nothing loaded injects nothing and behaves
+# exactly like Baseline, which is indistinguishable from a genuine null result.
+# Repeated here, not inherited: `api.evo` picks the driver with a plain OmegaConf.load that
+# does NOT apply `base_config` (workflows/api.py:239 vs utils.load_run_configuration). Left in
+# the base alone, every run silently launches upstream's evolving_main instead.
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+
+base_config: harness_base.yaml
+
+harness:
+  arm: raw
+  frozen: true
+  stream_path: ./data/harness/heldout.parquet
+  run_dir: ./outputs/harness/heldout-raw
+  store_root: ./outputs/harness/heldout-raw/pool
+  wandb:
+    group: heldout
+    run_name: heldout-raw
+run:
+  tag: heldout-raw

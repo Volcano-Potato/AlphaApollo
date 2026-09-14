@@ -1,0 +1,24 @@
+# Arm 1 of 3 -- Baseline: no cross-problem memory of any kind. Only AlphaApollo's existing
+# in-problem solution memory, which every arm keeps.
+#
+# The neutral system prompt is deliberately a non-empty string. `utils/agent.py:37` guards the
+# system message with `if self.system_prompt:`, so an empty one would drop the system message
+# entirely and leave this arm with a different *message structure* from the other two -- a
+# confound on top of the intended manipulation.
+# Repeated here, not inherited: `api.evo` picks the driver with a plain OmegaConf.load that
+# does NOT apply `base_config` (workflows/api.py:239 vs utils.load_run_configuration). Left in
+# the base alone, every run silently launches upstream's evolving_main instead.
+entrypoint_module: alphaapollo.core.generation.evolving.evolving_harness_main
+
+base_config: harness_base.yaml
+
+harness:
+  arm: baseline
+  frozen: false
+  stream_path: ./data/harness/adaptation.parquet
+  run_dir: ./outputs/harness/adapt-baseline
+  wandb:
+    group: adapt
+    run_name: adapt-baseline
+run:
+  tag: adapt-baseline
