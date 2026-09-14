@@ -572,6 +572,30 @@ python -m alphaapollo.core.harness.analysis --root ./outputs/harness --out_dir .
 
 **迁移案例给的是候选，不是结论。** 一个迁移案例是"注入了技能之后模型做得有什么不同"的论证，需要人读轨迹。能自动化的是**找出哪几道题值得读** —— 即 evo 注入了技能、且结果与 baseline 在同一道题上相反的那些。正负两个方向都给，负向的甚至更重要。
 
+#### wandb 看得到什么，看不到什么
+
+**这条界限要说清楚，否则很容易把 dashboard 当成结果。**
+
+| | wandb（实时） | `analysis.py`（跑完之后）|
+|---|---|---|
+| 逐题 `pass1_round0` / `pass_final` / `error` | ✅ 原始序列 | ✅ |
+| 每批 `harness/n_general`、`total_tokens`、`mean_skill_tokens` | ✅ 增长曲线 | ✅ |
+| 每批 `calls/*`、`tokens/*` 分角色 | ✅ | ✅ |
+| **按区间的 success rate 曲线** | ❌ | ✅ |
+| **per-topic 通过率** | ❌ | ✅ |
+| **三臂在交集上的比较** | ❌ | ✅ |
+| **skill 使用频次** | ❌ | ✅ |
+| **迁移案例候选** | ❌ | ✅ |
+
+wandb 拿到的是**原始序列**，七项报告结果**一项都不在里面** —— 它们要么是跨 run 的（交集比较），要么是需要分组聚合的（窗口曲线、per-topic），wandb 的逐 step 模型表达不了。
+
+用途因此是分工的：**wandb 用来盯 run 还活着**（曲线在动、`calls/unscoped` 没有变成非零、harness 在长），**`analysis.py` 用来出结果**。每一张 wandb 图都能仅凭 `metrics.jsonl` 离线重画 —— jsonl 才是可复现的产物。
+
+两个实现细节：
+
+- **只有数值转发给 wandb。** 逐题的 `topic` 是字符串，画不了图，转发过去只会给每个 run 加一列不可图表化的东西，还会让人误以为 per-topic 拆解在 dashboard 上是实时的。jsonl 保留全部字段。
+- **续跑会继续同一个 wandb run**，不会新开一个。run id 存在 `<run_dir>/wandb_run_id.txt`，语义与 `metrics.jsonl` 对齐：续跑接着写，删掉目录重跑则是全新的 run。没有这一条，一次被中断的实验会在 dashboard 上显示成两条半截曲线，而 resume 存在的理由恰恰就是"15 小时的跑会被中断"。
+
 导出最终 harness 本身：
 
 ```bash

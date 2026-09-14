@@ -373,3 +373,69 @@ def test_adversarial_run_identity_does_not_require_wandb_to_be_reachable(tmp_pat
     tracker.log(0, {"adapt/pass_final": 1})
     assert tracker.wandb_run is None
     assert (tmp_path / "metrics.jsonl").exists()
+
+
+# --- wandb forwarding vs the jsonl record ----------------------------------------------------
+
+
+class FakeWandbRun:
+    def __init__(self):
+        self.logged = []
+
+    def log(self, metrics, step=None):
+        self.logged.append((step, dict(metrics)))
+
+    def finish(self):
+        pass
+
+
+def test_jsonl_keeps_string_metrics_that_wandb_never_sees(tmp_path):
+    """`topic` is what the per-topic breakdown groups by, so jsonl must keep it. wandb cannot
+    plot a string, and forwarding it would add an unchartable column that invites the dashboard
+    to be read as if the breakdown were live there -- it is computed after the fact."""
+    tracker = HarnessTracker(tmp_path, enabled=False)
+    fake = FakeWandbRun()
+    tracker.wandb_run = fake
+    tracker.log(0, {"adapt/pass_final": 1, "topic": "algebra"})
+
+    row = json.loads((tmp_path / "metrics.jsonl").read_text().splitlines()[0])
+    assert row["topic"] == "algebra", "jsonl is the reproducible artifact; it keeps everything"
+    assert fake.logged == [(0, {"adapt/pass_final": 1})]
+
+
+def test_a_row_with_nothing_numeric_is_not_forwarded_at_all(tmp_path):
+    tracker = HarnessTracker(tmp_path, enabled=False)
+    fake = FakeWandbRun()
+    tracker.wandb_run = fake
+    tracker.log(0, {"topic": "algebra"})
+    assert fake.logged == []
+    assert json.loads((tmp_path / "metrics.jsonl").read_text().splitlines()[0])["topic"] == "algebra"
+
+
+def test_booleans_are_not_forwarded_as_numbers(tmp_path):
+    """bool is a subclass of int; a True/False metric would chart as 1/0 without ever having
+    been intended as a series."""
+    tracker = HarnessTracker(tmp_path, enabled=False)
+    fake = FakeWandbRun()
+    tracker.wandb_run = fake
+    tracker.log(0, {"flag": True, "adapt/error": 0})
+    assert fake.logged == [(0, {"adapt/error": 0})]
+
+
+def test_the_wandb_run_id_survives_a_restart_of_the_same_run_dir(tmp_path):
+    """A resumed run must continue its wandb run, not start a second one -- otherwise one
+    logical experiment shows as two partial curves, neither of which is the result."""
+    first = HarnessTracker(tmp_path, enabled=False)._wandb_run_id()
+    second = HarnessTracker(tmp_path, enabled=False)._wandb_run_id()
+    assert first == second
+    assert (tmp_path / "wandb_run_id.txt").read_text().strip() == first
+
+
+def test_wiping_the_run_dir_yields_a_fresh_wandb_run(tmp_path):
+    """Matching metrics.jsonl's semantics: a genuinely fresh run must not append its points
+    onto the old run's curves."""
+    import shutil
+
+    first = HarnessTracker(tmp_path / "r", enabled=False)._wandb_run_id()
+    shutil.rmtree(tmp_path / "r")
+    assert HarnessTracker(tmp_path / "r", enabled=False)._wandb_run_id() != first

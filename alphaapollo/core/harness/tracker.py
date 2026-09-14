@@ -116,6 +116,36 @@ class HarnessTracker:
         if enabled:
             self.wandb_run = self._try_init_wandb(project, run_name, group, config)
 
+    def _wandb_run_id(self) -> str:
+        """A wandb run id that lives and dies with this run directory.
+
+        Without it, a resumed run starts a *second* wandb run: the dashboard then shows one
+        logical experiment as two partial curves, neither of which is the result. That is not
+        hypothetical -- resume exists precisely because a 15-hour run gets interrupted, so the
+        interrupted case is the one the dashboard most needs to get right.
+
+        The id is stored in the run directory rather than derived from its path, so it matches
+        ``metrics.jsonl``'s semantics exactly: resuming continues the same wandb run because the
+        file is still there, and wiping the directory for a genuinely fresh run gets a fresh one
+        because the file went with it. A path hash would silently append a new experiment's
+        points onto the old run's curves.
+        """
+        import uuid
+
+        path = self.run_dir / "wandb_run_id.txt"
+        try:
+            if path.exists():
+                existing = path.read_text(encoding="utf-8").strip()
+                if existing:
+                    return existing
+            new_id = uuid.uuid4().hex[:16]
+            path.write_text(new_id + "\n", encoding="utf-8")
+            return new_id
+        except OSError:
+            # An unwritable run dir is already fatal for metrics.jsonl; do not let it be fatal
+            # here first, and do not let it silently pair with `resume="allow"` either.
+            return uuid.uuid4().hex[:16]
+
     def _try_init_wandb(self, project: str | None, run_name: str | None, group: str | None,
                         config: dict | None):
         """Best-effort wandb init. Returns ``None`` (never raises) on any failure: wandb not
@@ -144,7 +174,8 @@ class HarnessTracker:
             # arms of a phase on the same axes. An explicit name matters for the same reason --
             # without it wandb assigns random nicknames and the dashboard cannot tell the arms
             # apart, which is the only thing it is here to do.
-            kwargs = {"project": project, "name": run_name, "config": config, "dir": str(self.run_dir)}
+            kwargs = {"project": project, "name": run_name, "config": config, "dir": str(self.run_dir),
+                      "id": self._wandb_run_id(), "resume": "allow"}
             if group is not None:
                 kwargs["group"] = group
             return wandb.init(**kwargs)
@@ -167,7 +198,16 @@ class HarnessTracker:
 
         if self.wandb_run is not None:
             try:
-                self.wandb_run.log(metrics, step=step)
+                # Only numbers go to wandb. jsonl keeps everything, including the per-problem
+                # `topic` label the per-topic breakdown groups by -- but a string metric cannot
+                # be plotted, so forwarding it just adds an unchartable column to every run and
+                # invites the dashboard to be read as if the breakdown were live there. It is
+                # not: the per-topic table, like all seven reported results, is computed after
+                # the fact by `analysis.py` from jsonl.
+                numeric = {k: v for k, v in metrics.items()
+                           if isinstance(v, (int, float)) and not isinstance(v, bool)}
+                if numeric:
+                    self.wandb_run.log(numeric, step=step)
             except Exception as exc:
                 logger.warning("wandb.log() failed at step %s, continuing jsonl-only: %s", step, exc)
 
