@@ -187,3 +187,69 @@ def test_a_dead_problem_is_distinguishable_from_a_wrong_answer(tmp_path):
     assert rows[2]["adapt/error"] == 1 and rows[2]["adapt/pass_final"] == 0
     assert rows[1]["adapt/error"] == 0
     assert sum(r["adapt/error"] for r in rows.values()) == 1
+
+
+# --- run lock: two processes on one run dir corrupt each other silently ---------------------
+
+
+def test_a_fresh_directory_can_be_locked(tmp_path):
+    import os
+
+    from alphaapollo.core.harness.resume import LOCK_FILENAME, acquire_run_lock
+    acquire_run_lock(tmp_path)
+    assert (tmp_path / LOCK_FILENAME).read_text().strip() == str(os.getpid())
+
+
+def test_the_same_process_may_re_acquire_its_own_lock(tmp_path):
+    """Re-entry must not deadlock a process against itself."""
+    from alphaapollo.core.harness.resume import acquire_run_lock
+    acquire_run_lock(tmp_path)
+    acquire_run_lock(tmp_path)
+
+
+def test_a_lock_held_by_a_live_process_is_refused(tmp_path):
+    """The failure this prevents is quiet: two writers interleave metrics.jsonl rows, the file
+    stays valid JSONL, the run stays 'successful', and only duplicated problem indices betray it
+    -- after every average has already double-counted them."""
+    import os
+
+    from alphaapollo.core.harness.resume import LOCK_FILENAME, RunAlreadyActive, acquire_run_lock
+    # pid 1 (launchd/init) always exists and is never us.
+    (tmp_path / LOCK_FILENAME).write_text("1\n", encoding="utf-8")
+    with pytest.raises(RunAlreadyActive) as exc:
+        acquire_run_lock(tmp_path)
+    assert str(tmp_path) in str(exc.value)
+    assert os.getpid() != 1
+
+
+def test_a_stale_lock_is_taken_over(tmp_path):
+    """A run killed by SIGKILL never cleans up. Refusing to restart after a crash would break
+    the recovery this module exists to provide."""
+    import os
+
+    from alphaapollo.core.harness.resume import LOCK_FILENAME, acquire_run_lock
+    (tmp_path / LOCK_FILENAME).write_text("999999\n", encoding="utf-8")  # not a live pid
+    acquire_run_lock(tmp_path)
+    assert (tmp_path / LOCK_FILENAME).read_text().strip() == str(os.getpid())
+
+
+def test_a_corrupt_lock_file_is_taken_over(tmp_path):
+    from alphaapollo.core.harness.resume import LOCK_FILENAME, acquire_run_lock
+    (tmp_path / LOCK_FILENAME).write_text("not-a-pid\n", encoding="utf-8")
+    acquire_run_lock(tmp_path)
+
+
+def test_releasing_removes_only_our_own_lock(tmp_path):
+    from alphaapollo.core.harness.resume import LOCK_FILENAME, acquire_run_lock, release_run_lock
+    acquire_run_lock(tmp_path)
+    release_run_lock(tmp_path)
+    assert not (tmp_path / LOCK_FILENAME).exists()
+
+    (tmp_path / LOCK_FILENAME).write_text("1\n", encoding="utf-8")
+    release_run_lock(tmp_path)
+    assert (tmp_path / LOCK_FILENAME).exists(), "another process's lock is not ours to remove"
+
+
+def test_releasing_a_lock_that_was_never_taken_is_harmless(tmp_path):
+    from alphaapollo.core.harness.resume import release_run_lock
+    release_run_lock(tmp_path)

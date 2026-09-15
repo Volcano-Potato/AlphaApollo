@@ -190,6 +190,77 @@ def plan_resume(run_dir: str | Path, *, fp: dict, batch_size: int) -> ResumePlan
     return ResumePlan(start_batch=completed, first_problem_idx=completed * batch_size)
 
 
+LOCK_FILENAME = "run.lock"
+
+
+class RunAlreadyActive(RuntimeError):
+    """Raised when another live process already owns this run directory."""
+
+
+def _pid_is_alive(pid: int) -> bool:
+    """``os.kill(pid, 0)`` raises if the pid is gone, returns if it exists.
+
+    ``PermissionError`` counts as alive: the process exists, it just belongs to someone else.
+    """
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
+def acquire_run_lock(run_dir: str | Path) -> Path:
+    """Claim ``run_dir`` for this process, or refuse if a live process already holds it.
+
+    Two processes writing one run directory interleave their ``metrics.jsonl`` rows and their
+    progress markers, and the result is quiet: the file stays valid JSONL, the run stays
+    "successful", and the only trace is duplicated problem indices that every downstream average
+    then double-counts. It happened here during testing, and the path to it in a real run is
+    short -- a long run looks stalled, gets relaunched, and the two processes race with the
+    original still alive.
+
+    A stale lock (the recorded pid is gone) is taken over rather than treated as an error: a run
+    killed by SIGKILL never gets to clean up, and refusing to restart after a crash would break
+    the recovery this module exists to provide.
+    """
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    path = run_dir / LOCK_FILENAME
+
+    if path.exists():
+        try:
+            holder = int(path.read_text(encoding="utf-8").strip() or 0)
+        except (ValueError, OSError):
+            holder = 0
+        if holder and holder != os.getpid() and _pid_is_alive(holder):
+            raise RunAlreadyActive(
+                f"{path} is held by live process {holder}. Two processes writing one run "
+                f"directory interleave their metrics and corrupt every average computed from "
+                f"them, without failing. Wait for it, kill it, or point harness.run_dir "
+                f"somewhere else."
+            )
+        if holder:
+            logger.info("taking over a stale lock from pid %s", holder)
+
+    path.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    return path
+
+
+def release_run_lock(run_dir: str | Path) -> None:
+    """Drop this process's claim. Never raises -- a run that finished its work must not fail in
+    cleanup, and a lock left behind is taken over by the next process anyway."""
+    path = Path(run_dir) / LOCK_FILENAME
+    try:
+        if path.exists() and path.read_text(encoding="utf-8").strip() == str(os.getpid()):
+            path.unlink()
+    except OSError:
+        logger.warning("could not release %s; the next run will take it over as stale", path)
+
+
 def prepare_resume(run_dir: str | Path, *, fp: dict, batch_size: int,
                    partial_logs: dict[str, str]) -> ResumePlan:
     """Plan the resume and drop every partial row the aborted batch left behind.

@@ -627,7 +627,13 @@ def run(config: str | None = None) -> None:
     from alphaapollo.core.harness.accounting import CallAccountant, install_accounting
     from alphaapollo.core.harness.arms import build_arm
     from alphaapollo.core.harness.loader import load_stream
-    from alphaapollo.core.harness.resume import fingerprint, prepare_resume, write_progress
+    from alphaapollo.core.harness.resume import (
+        acquire_run_lock,
+        fingerprint,
+        prepare_resume,
+        release_run_lock,
+        write_progress,
+    )
     from alphaapollo.core.harness.store import Budget, Caps
     from alphaapollo.core.harness.tracker import HarnessTracker
     from alphaapollo.core.harness.trajectory import save_trajectory
@@ -711,6 +717,11 @@ def run(config: str | None = None) -> None:
     # intended behaviour -- see `resume.plan_resume`.
     run_dir = harness_cfg.get("run_dir", "./outputs/harness")
     batch_size = int(harness_cfg.get("batch_size", 8))
+
+    # Before any truncation: `prepare_resume` rewrites metrics.jsonl and the selection log, and
+    # doing that to a file another live process is appending to is the worst possible version of
+    # this collision.
+    acquire_run_lock(run_dir)
     # Every log an aborted batch could have written per-problem rows into. Both arms record a
     # selection per problem in step 4; their batch-committed artifacts (skills/, harness_log,
     # pool.jsonl) are written only by end_batch and so need no truncation.
@@ -760,6 +771,7 @@ def run(config: str | None = None) -> None:
     finally:
         uninstall()
         tracker.finish()
+        release_run_lock(run_dir)
 
 
 if __name__ == "__main__":
