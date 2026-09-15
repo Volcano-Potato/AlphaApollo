@@ -660,7 +660,7 @@ python -m alphaapollo.core.harness.export --store_root ./outputs/harness/adapt-e
 
 wandb 是**可选**的（任务书从未要求）：六个 run（3 臂 × adaptation/held-out）共用一个 project，run name 默认 `<phase>-<arm>`、group 默认 phase，这样 dashboard 上三条臂才分得清、一个 phase 的三条臂才画在同一组轴上。每个图表都能仅凭 `<run_dir>/metrics.jsonl` 离线重画 —— jsonl 才是可复现的产物，wandb 只拿到一份副本。
 
-### 7.5 开销口径
+### 7.7 开销口径
 
 `accounting.py` 按 role 分桶统计调用数与 token：
 
