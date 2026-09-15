@@ -15,8 +15,13 @@ cd "$(dirname "$0")/.."
 summarise() {
   printf '\n%s  [%s]\n' "════════════════════════════════" "$(date '+%F %T')"
 
-  if pgrep -f "alphaapollo.workflows.evo" >/dev/null 2>&1; then
-    printf 'processes : %s alive\n' "$(pgrep -fc 'alphaapollo.workflows.evo')"
+  # Counted by piping to wc, not with `pgrep -c`: BSD/macOS pgrep has no -c flag, and the usage
+  # error it prints instead is easy to read past -- leaving the count blank while the table below
+  # still renders, which looks like "no processes" rather than like a broken command.
+  local alive
+  alive=$(pgrep -f "alphaapollo.workflows.evo" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "${alive:-0}" -gt 0 ]; then
+    printf 'processes : %s alive\n' "$alive"
   else
     printf 'processes : none running\n'
   fi
