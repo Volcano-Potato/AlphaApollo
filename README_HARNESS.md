@@ -496,6 +496,59 @@ python -m alphaapollo.workflows.evo --config examples/configs/harness_adapt_evo.
 
 ⚠️ flag 是 `--config`，**不是 `--config_path`**。`parse_known_args` 不会拒绝未知参数，它会把 `--config_path` 变成一条没人读的 override，于是 `--config` 取默认值、跑的是上游的 `evolving_main`，25 秒跑完 30 道 aime24 题、零次模型调用、最后一行还写着 "Finished run"。
 
+#### 查看进度
+
+```bash
+./scripts/status.sh          # 看一次
+./scripts/status.sh -w       # 每 30 秒刷新
+```
+
+```
+════════════════════════════════  [2026-09-16 01:57:45]
+processes : 3 alive
+
+RUN                  DONE  PASS@1   FINAL ERRORS  BATCHES UPDATED
+adapt-baseline         72   18.1%   20.8%      1        9 12s ago
+adapt-raw              64   17.2%   18.8%      0        8 41s ago
+adapt-evo              64   15.6%   21.9%      2        8 8s ago
+
+adapt-evo          ===> Problem 64 overall success: 0.0000, elapsed: 61.2s
+```
+
+它**只读磁盘产物**（`metrics.jsonl` / `progress.json` / 各 run 的日志），不碰运行中的终端。因此在 tmux 里跑、在另一个窗口查是安全的，跑完之后查也一样有效，写入过程中查也安全（半行 JSON 会被跳过而不是报错）。
+
+怎么读这张表：
+
+| 列 | 含义 |
+|---|---|
+| `DONE` | 已记录的题数（含跑挂的）|
+| `PASS@1` / `FINAL` | **只统计成功跑完的题**，第 0 轮 / 最后一轮 |
+| `ERRORS` | 跑挂的题数。**持续上涨说明在被限流** —— 降 `harness.max_workers` 后续跑 |
+| `BATCHES` | 已提交的批数，也是续跑时会从哪里接上 |
+| `UPDATED` | 该 run 的 `metrics.jsonl` 多久没变过 |
+
+**`UPDATED` 是盯运行时最要紧的一列。** 卡住的 run 和跑得慢的 run 在准确率那几列上长得一模一样，只有"多久没更新"能区分。所以表格下面还会印每个 run 的最后一行日志 —— 一个刚跑完的 run 会显示 "15m ago" 但那不是卡住，要结合 `processes` 那行一起看。
+
+三种状态的读法：
+
+```
+processes: 3 alive  +  UPDATED 都在几十秒内      → 正常
+processes: 3 alive  +  某个 run 十几分钟没动     → 那个 run 卡住了
+processes: none     +  所有 run 都 DONE=满       → 跑完了
+```
+
+其他产物随时可以直接看：
+
+```bash
+tail -f run.log                                  # 脚本自己的阶段日志
+tail -f outputs/harness/adapt-evo.log            # 单个 run 的详细输出
+cat outputs/harness/adapt-evo/progress.json      # 跑到第几批
+ls outputs/harness/adapt-evo/store/skills/       # 目前编译出了哪些技能
+tail -3 outputs/harness/adapt-evo/store/harness_log.jsonl   # 最近几个 curator 决策
+```
+
+wandb 上同时有实时曲线（`alphaapollo-evo-harness` project，按 `adapt` / `heldout` 分组），但**只有原始序列** —— 七项报告结果不在上面，见 §7.6 末尾那张对照表。
+
 ### 7.5 配置文件
 
 七份，一份基座 + 六份 overlay，用的是上游自带的 `base_config:` 继承（`utils.load_run_configuration` → `_apply_base_config`），不是本项目发明的机制：
