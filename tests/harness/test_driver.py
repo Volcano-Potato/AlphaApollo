@@ -848,3 +848,29 @@ def test_saved_trajectory_round_trips_and_sorts_in_stream_order(tmp_path):
                      "problem_0149.json"], "zero-padded so a plain listing is stream order"
     restored = json.loads(trajectory_path(tmp_path, 7).read_text())
     assert restored["step_outputs"][0]["policy_answer"] == "1"
+
+
+def test_a_frozen_run_evaluates_every_problem_including_a_short_final_batch(tmp_path):
+    """The held-out set is 30 problems at batch_size 8. Dropping the tail loses 6 of them from
+    the only set the headline number is computed on."""
+    seen = []
+
+    def counting(problem_idx, problem, runtime):
+        seen.append(problem_idx)
+        return fake_run_problem(problem_idx, problem, runtime)
+
+    summary = run_stream(problems=problems(30), arm=BaselineArm(),
+                         runtime_factory=runtime_factory, run_problem_fn=counting,
+                         tracker=HarnessTracker(tmp_path, enabled=False),
+                         accountant=CallAccountant(), batch_size=8, max_workers=4,
+                         drop_last_batch=False)
+    assert seen == list(range(30))
+    assert summary["n_problems"] == 30
+
+
+def test_an_adaptation_run_still_drops_its_short_final_batch(tmp_path):
+    summary = run_stream(problems=problems(30), arm=BaselineArm(),
+                         runtime_factory=runtime_factory, run_problem_fn=fake_run_problem,
+                         tracker=HarnessTracker(tmp_path, enabled=False),
+                         accountant=CallAccountant(), batch_size=8, max_workers=4)
+    assert summary["n_problems"] == 24

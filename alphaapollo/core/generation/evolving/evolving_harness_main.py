@@ -438,6 +438,7 @@ def run_stream(
     start_batch: int = 0,
     on_batch_complete: Callable[[int], None] | None = None,
     trajectory_sink: Callable[[int, dict], None] | None = None,
+    drop_last_batch: bool = True,
 ) -> dict:
     """Run ``problems`` to completion against ``arm``'s cross-problem mechanism, batch-serial /
     within-batch-parallel (see module docstring for the five-step protocol).
@@ -481,7 +482,7 @@ def run_stream(
         with role_scope("solver"):
             return run_problem_fn(problem_idx, problem, runtime)
 
-    for batch_idx, batch in enumerate(batches(problems, batch_size)):
+    for batch_idx, batch in enumerate(batches(problems, batch_size, drop_last=drop_last_batch)):
         if batch_idx < start_batch:
             continue
         is_first_executed_batch = batch_idx == start_batch
@@ -748,6 +749,10 @@ def run(config: str | None = None) -> None:
             batch_size=batch_size,
             max_workers=int(harness_cfg.get("max_workers", 8)),
             start_batch=plan.start_batch,
+            # A frozen run evaluates; it never updates, so a short final batch costs nothing
+            # protocol-wise and keeping it is the difference between evaluating on the whole
+            # held-out year and on 80% of it.
+            drop_last_batch=not bool(harness_cfg.get("frozen", False)),
             on_batch_complete=on_batch_complete,
             trajectory_sink=trajectory_sink if save_trajectories else None,
         )

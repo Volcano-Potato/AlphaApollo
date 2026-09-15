@@ -88,14 +88,26 @@ def load_stream(path: str | Path) -> list[dict]:
     return problems
 
 
-def batches(problems: list[dict], batch_size: int = 8) -> list[list[dict]]:
-    """Split ``problems`` into fixed-size batches, dropping any incomplete tail.
+def batches(problems: list[dict], batch_size: int = 8, *, drop_last: bool = True) -> list[list[dict]]:
+    """Split ``problems`` into fixed-size batches.
 
-    A half-batch would make the spacing between harness-update points inconsistent across the
-    stream, so the tail is discarded rather than emitted short.
+    ``drop_last=True`` (the default, and what an adaptation run wants) discards an incomplete
+    tail: a half-batch would make the spacing between harness-update points inconsistent across
+    the stream, and the update cohort is what a batch *is* during adaptation.
+
+    ``drop_last=False`` is for a **frozen** run. There, nothing updates -- batching is pure
+    chunking for the thread pool and carries no protocol meaning -- so dropping the tail buys
+    nothing and costs evaluation problems. It cost 6 of the 30 held-out problems at
+    ``batch_size=8``, which would have quietly turned "at least one complete recent year held
+    out for final evaluation" (the assignment's wording) into 80% of one, and shrunk the only
+    set the headline number is computed on.
     """
     n_full = len(problems) // batch_size
-    return [problems[i * batch_size:(i + 1) * batch_size] for i in range(n_full)]
+    out = [problems[i * batch_size:(i + 1) * batch_size] for i in range(n_full)]
+    tail = problems[n_full * batch_size:]
+    if tail and not drop_last:
+        out.append(tail)
+    return out
 
 
 def interleave(

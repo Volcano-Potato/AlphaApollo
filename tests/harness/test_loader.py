@@ -213,3 +213,31 @@ def test_interleave_empty_input_returns_empty_list():
 
 def test_batches_empty_input_returns_empty_list():
     assert batches([], 8) == []
+
+
+# --- the incomplete tail: dropped while adapting, kept while evaluating ---------------------
+
+
+def test_batches_keeps_the_tail_when_asked():
+    """A frozen run never updates, so batching is pure chunking there and dropping the tail buys
+    nothing. At batch_size=8 it silently cost 6 of the 30 held-out problems -- turning "at least
+    one complete recent year held out" into 80% of one, on the only set the headline number is
+    computed from."""
+    out = batches(list(range(20)), 8, drop_last=False)
+    assert [len(b) for b in out] == [8, 8, 4]
+    assert [p for b in out for p in b] == list(range(20)), "every problem appears exactly once"
+
+
+def test_batches_still_drops_the_tail_by_default():
+    """Adaptation keeps the old behaviour: a half-batch makes the spacing between harness-update
+    points inconsistent, and the update cohort is what a batch is during adaptation."""
+    assert [len(b) for b in batches(list(range(20)), 8)] == [8, 8]
+
+
+def test_keeping_the_tail_is_a_no_op_when_it_divides_evenly():
+    assert batches(list(range(16)), 8, drop_last=False) == batches(list(range(16)), 8)
+
+
+def test_the_real_heldout_size_is_fully_covered_when_the_tail_is_kept():
+    assert sum(len(b) for b in batches(list(range(30)), 8, drop_last=False)) == 30
+    assert sum(len(b) for b in batches(list(range(30)), 8)) == 24, "the old behaviour lost 6"
