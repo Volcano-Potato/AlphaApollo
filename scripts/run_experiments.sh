@@ -59,8 +59,24 @@ run_one() {   # run_one <phase> <arm>
   fi
 }
 
+announce_concurrency() {
+  # The number that actually matters is arms x max_workers, and it is nowhere in any single
+  # config -- one says 4, the script decides there are three of them. Printing it makes the
+  # multiplication visible at launch instead of at the first rate-limit storm, which shows up
+  # as lost problems rather than as an error.
+  local n_arms workers
+  n_arms=$(echo "$ARMS" | wc -w | tr -d ' ')
+  workers=$(grep -E "^\s+max_workers:" "$CONFIG_DIR/harness_base.yaml" | grep -oE "[0-9]+" | head -1)
+  if [[ "$PARALLEL" == "1" ]]; then
+    log "concurrency: $n_arms arms x $workers workers = $((n_arms * workers)) in flight (DashScope: 12 safe, 16 throttles)"
+  else
+    log "concurrency: serial, $workers workers in flight"
+  fi
+}
+
 run_phase() {   # run_phase <phase>
   local phase=$1 rc=0
+  announce_concurrency
   if [[ "$PARALLEL" == "1" ]]; then
     # The arms are independent: no shared state, no shared output directory. Three processes
     # is ~1.5GB, and the real ceiling is the provider's concurrency limit, not this machine.

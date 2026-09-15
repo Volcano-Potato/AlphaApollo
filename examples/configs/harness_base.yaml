@@ -90,7 +90,13 @@ harness:
   # Protocol granularity: a problem may only be influenced by skills compiled from *earlier*
   # batches. Independent of max_workers, which is throughput only.
   batch_size: 8
-  max_workers: 5
+  # Per-run concurrency. `run_experiments.sh` runs the three arms at once by default, so the
+  # concurrency the provider actually sees is 3 x this. Measured DashScope ceiling: 12 is safe,
+  # 16 starts rate-limiting, 24 loses ~40% of requests (commit d32a9f6). 3 x 4 = 12 sits exactly
+  # on the safe ceiling. Raise it only with PARALLEL=0, and lower it (not batch_size) if the run
+  # starts losing problems -- it is deliberately excluded from the resume fingerprint so it can
+  # be changed between attempts.
+  max_workers: 4
   seed: 1234
   feedback_level: standard
   save_trajectories: true

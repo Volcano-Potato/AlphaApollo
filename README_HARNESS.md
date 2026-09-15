@@ -522,7 +522,7 @@ examples/configs/
 | `run_dir` | — | 本次 run 的全部产物：`metrics.jsonl` / `progress.json` / `trajectories/` |
 | `store_root` | — | skill store（`evo`）或经验池（`raw`）；`baseline` 不设 |
 | `batch_size` | 8 | **协议旋钮**：harness 多久能变一次 |
-| `max_workers` | 5 | **吞吐旋钮**：同时跑几道题。与 `batch_size` 完全独立 |
+| `max_workers` | 4 | **吞吐旋钮**：同时跑几道题。脚本默认三臂并行，provider 看到的是 **3×** 这个数；实测 12 安全、16 开始限流 |
 | `frozen` | false | held-out 阶段为 true：只选择注入，不再增删改 |
 | `seed` | 1234 | 注入每一次请求；DashScope 的 seed 是 best-effort，**不保证复现** |
 | `feedback_level` | standard | `standard` \| `minimal`（verifier 反馈质量消融） |
