@@ -183,26 +183,69 @@ def harness_growth(run: RunData) -> list[dict]:
     ]
 
 
-def injected_context(store_root: str | Path) -> dict:
-    """Mean injected tokens per problem, and how often anything was injected at all.
+def load_selections(store_root: str | Path, only: set[int] | None = None) -> dict[int, dict]:
+    """One selection row per problem, keyed by stream position.
 
-    Read from the selection log rather than from the harness's size: what matters is what
-    actually entered a context, and early problems see an empty harness.
+    The de-duplication here is not defensive tidying; it is required for correctness on the
+    held-out phase. ``run_experiments.sh`` gives a frozen run its state by copying the adaptation
+    arm's whole directory, selection log included, and the held-out run then *appends* its own
+    rows to that file. So ``heldout-evo/store/selection_log.jsonl`` holds 174 rows: 144 from the
+    adaptation stream followed by 30 from the held-out year -- and because each phase numbers its
+    problems from zero, the held-out rows collide with adaptation positions 0-29 rather than
+    extending past them. Reading the file whole therefore answers a question about the held-out
+    year with mostly adaptation data (measured: 174 "problems" instead of 30, and a mean injected
+    length of 189 tokens instead of 209).
+
+    Two rules fix it, and both are needed:
+
+    * **Last write wins**, so a colliding position resolves to the phase that ran last -- which is
+      the run being reported on, since it is the one that appended.
+    * **``only``**, the set of stream positions this run actually has metrics for, so the 114
+      inherited rows above the held-out range are dropped instead of being counted as problems
+      that this run never saw.
+
+    ``only`` should be the run's whole problem set (``RunData.problems``), not
+    ``RunData.completed``: a problem whose rollout crashed still had skills selected into its
+    context and still paid for them, and cost reporting that silently drops those understates it.
     """
     path = Path(store_root) / "selection_log.jsonl"
     if not path.exists():
-        return {"n_problems": 0, "mean_tokens": 0.0, "n_with_injection": 0}
-    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-    tokens = [int(r.get("n_tokens", 0) or 0) for r in rows]
+        return {}
+    rows: dict[int, dict] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        idx = int(row.get("problem_idx", -1))
+        if only is not None and idx not in only:
+            continue
+        rows[idx] = row
+    return dict(sorted(rows.items()))
+
+
+def injected_context(store_root: str | Path, only: set[int] | None = None) -> dict:
+    """Mean injected tokens per problem, and how often anything was injected at all.
+
+    Read from the selection log rather than from the harness's size: what matters is what
+    actually entered a context, and early problems see an empty harness. See
+    :func:`load_selections` for why ``only`` is not optional in practice on a held-out run.
+    """
+    rows = load_selections(store_root, only)
+    if not rows:
+        return {"n_problems": 0, "mean_tokens": 0.0, "max_tokens": 0, "n_with_injection": 0}
+    tokens = [int(r.get("n_tokens", 0) or 0) for r in rows.values()]
     return {
-        "n_problems": len(rows),
-        "mean_tokens": (sum(tokens) / len(tokens)) if tokens else 0.0,
-        "max_tokens": max(tokens, default=0),
+        "n_problems": len(tokens),
+        "mean_tokens": sum(tokens) / len(tokens),
+        "max_tokens": max(tokens),
         "n_with_injection": sum(1 for t in tokens if t > 0),
     }
 
 
-def skill_usage(store_root: str | Path) -> dict[str, dict]:
+def skill_usage(store_root: str | Path, only: set[int] | None = None) -> dict[str, dict]:
     """How often each skill was injected, and how often the problem was then solved.
 
     Counted from the selection log, not from each ``Skill``'s own counter: a skill a later
@@ -210,15 +253,13 @@ def skill_usage(store_root: str | Path) -> dict[str, dict]:
     happened and still cost tokens. Dropping those would understate both usage and cost.
     Ordered by frequency -- the question "which skills actually got used" is answered by the top
     of the list and by how long the tail of never-injected ones is.
+
+    ``only`` scopes this to one phase, for the reason given in :func:`load_selections`; without it
+    a held-out run reports the union of the skills two phases injected (measured: 15 rather than
+    the 13 the held-out year actually saw).
     """
-    path = Path(store_root) / "selection_log.jsonl"
-    if not path.exists():
-        return {}
     usage: dict[str, dict] = defaultdict(lambda: {"n_selected": 0, "n_selected_success": 0})
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        row = json.loads(line)
+    for row in load_selections(store_root, only).values():
         success = int(bool(row.get("success")))
         for sid in row.get("skill_ids") or []:
             usage[str(sid)]["n_selected"] += 1
@@ -256,13 +297,7 @@ def transfer_cases(evo: RunData, baseline: RunData, store_root: str | Path,
     strictly more interesting: the assignment weights honest analysis of interference over a
     scoreboard.
     """
-    path = Path(store_root) / "selection_log.jsonl"
-    selections: dict[int, dict] = {}
-    if path.exists():
-        for line in path.read_text(encoding="utf-8").splitlines():
-            if line.strip():
-                row = json.loads(line)
-                selections[int(row.get("problem_idx", -1))] = row
+    selections = load_selections(store_root, only=set(evo.problems) or None)
 
     positive, negative = [], []
     for idx in sorted(evo.completed & baseline.completed):
@@ -363,7 +398,7 @@ def render(adapt: dict[str, RunData], heldout: dict[str, RunData],
         if not run.problems:
             continue  # an arm that has not run is absent, not an arm that cost nothing
         c = cost(run)
-        inj = injected_context(store_roots[name]) if name in store_roots else {}
+        inj = injected_context(store_roots[name], set(run.problems)) if name in store_roots else {}
         rows.append([name, c["calls_solver"], c["calls_mgmt"],
                      f"{c['calls_per_problem']:.1f}",
                      f"{c['tokens_in'] / 1e6:.2f}M", f"{c['tokens_out'] / 1e6:.2f}M",
@@ -378,7 +413,7 @@ def render(adapt: dict[str, RunData], heldout: dict[str, RunData],
     for name in ("evo", "raw"):
         if name not in store_roots or not adapt.get(name, RunData(name)).problems:
             continue
-        usage = skill_usage(store_roots[name])
+        usage = skill_usage(store_roots[name], set(adapt[name].problems))
         if not usage:
             continue
         lines += [f"**{name}** — {len(usage)} skill(s) were injected at least once", ""]

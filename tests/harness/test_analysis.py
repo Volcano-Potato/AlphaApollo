@@ -185,6 +185,58 @@ def test_injected_context_without_a_selection_log_is_zero_not_an_error(tmp_path)
     assert injected_context(tmp_path)["n_problems"] == 0
 
 
+def write_selections(tmp_path, rows):
+    (tmp_path / "selection_log.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+
+def test_a_selection_log_is_scoped_to_the_phase_being_reported(tmp_path):
+    """`run_experiments.sh` gives a frozen run its state by copying the adaptation arm's whole
+    directory, selection log included, and the held-out run then appends its own rows to that
+    file. Both phases number problems from zero, so the held-out rows land *on top of* adaptation
+    positions rather than after them -- reading the file whole answers a question about the
+    held-out year with mostly adaptation data. This is `heldout-evo/store`'s real layout.
+    """
+    write_selections(tmp_path, [
+        {"problem_idx": 0, "n_tokens": 1000},   # inherited from adaptation
+        {"problem_idx": 1, "n_tokens": 1000},
+        {"problem_idx": 2, "n_tokens": 1000},
+        {"problem_idx": 0, "n_tokens": 100},    # this run's own, appended afterwards
+        {"problem_idx": 1, "n_tokens": 300},
+    ])
+    stats = injected_context(tmp_path, only={0, 1})
+    assert stats["n_problems"] == 2
+    assert stats["mean_tokens"] == 200.0 and stats["max_tokens"] == 300
+
+
+def test_load_selections_resolves_a_collision_to_the_row_written_last(tmp_path):
+    """The run being reported on is the one that appended, so last write wins."""
+    from alphaapollo.core.harness.analysis import load_selections
+
+    write_selections(tmp_path, [{"problem_idx": 0, "n_tokens": 1000},
+                                {"problem_idx": 0, "n_tokens": 100}])
+    assert load_selections(tmp_path)[0]["n_tokens"] == 100
+
+
+def test_skill_usage_is_scoped_too_or_it_reports_the_union_of_two_phases(tmp_path):
+    from alphaapollo.core.harness.analysis import skill_usage
+
+    write_selections(tmp_path, [
+        {"problem_idx": 0, "skill_ids": ["sk_adapt"], "success": True},
+        {"problem_idx": 5, "skill_ids": ["sk_adapt"], "success": True},
+        {"problem_idx": 0, "skill_ids": ["sk_heldout"], "success": False},
+    ])
+    assert list(skill_usage(tmp_path, only={0})) == ["sk_heldout"]
+    # Unscoped, the inherited rows are indistinguishable from this run's own.
+    assert set(skill_usage(tmp_path)) == {"sk_adapt", "sk_heldout"}
+
+
+def test_an_unscoped_read_is_still_the_whole_log_for_a_run_that_inherited_nothing(tmp_path):
+    """The adaptation arms write their own log from scratch, so `only` must not change them."""
+    write_selections(tmp_path, [{"problem_idx": i, "n_tokens": 100} for i in range(3)])
+    assert injected_context(tmp_path) == injected_context(tmp_path, only={0, 1, 2})
+
+
 # --- transfer cases ---------------------------------------------------------------------------
 
 
