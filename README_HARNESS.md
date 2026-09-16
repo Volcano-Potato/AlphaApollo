@@ -2,11 +2,14 @@
 
 本文档描述在 AlphaApollo 之上新增的**跨问题 skill 演化层**（TMLR mini-project：Task A 机制 / Task B 编译闭环 / Task C 对照实验）。
 
+> **只想看实验结果？** 读 [`TASK_C_REPORT.md`](TASK_C_REPORT.md) —— 那是一份独立的结果报告 + 六项验收重点的逐条自查。本文档是系统设计与使用说明，§8 给出同一批结果的完整表格。
+
 > **当前状态（务必先读）**
 >
-> - Task A（skill 机制）与 Task B（context→harness 编译闭环）的代码与测试**已完成**：`tests/harness/` 共 **405 个测试全部通过**（本机实测 `405 passed in 4.63s`）。
-> - 驱动器已经对**真实 API** 跑通过端到端（最大一次为 12 题烟囱测试），下文第 8 节给出该次运行的真实 trace。
-> - **Task C 的三组对照实验尚未运行。本文档中不存在任何结果表。** 尚未完成的内容集中列在第 11 节，请以该节为准。
+> - Task A（skill 机制）与 Task B（context→harness 编译闭环）的代码与测试**已完成**：`tests/harness/` 共 **571 个测试全部通过**（本机实测 `571 passed in 5.22s`）。
+> - **Task C 的三组对照实验已全部跑完**：6 个 run（3 臂 × adaptation/held-out），144 + 30 题，**丢题 0**。结果见第 8 节，产物在 `outputs/harness/`。
+> - **主结果是一个 null result，且三臂之间没有一项差异是统计显著的**（McNemar 精确检验最小 p = 0.125）。第 8.9 节按任务书要求对它做了分析，而不是把它当成失败藏起来。
+> - 尚未完成的内容集中列在第 12 节，请以该节为准。
 
 ---
 
@@ -27,16 +30,18 @@ AlphaApollo 原生的 `informal_math_evolving` 环境，是在**单道题目内�
 
 新增代码统一带 Apache-2.0 头，版权署 `Copyright 2026 TMLR Group`。
 
-### 1.2 改动边界：上游文件零修改
+### 1.2 改动边界：上游**源码**零修改
 
 对比 fork 基线 commit `712a04d`（上游最后一个 commit）到 `HEAD`：
 
 ```
-$ git diff --name-status 712a04d..HEAD
-43 files changed, 13747 insertions(+), 1 deletion(-)
+$ git diff --stat 712a04d..HEAD
+140 files changed, 26980 insertions(+), 2 deletions(-)
 ```
 
-其中 **唯一被修改（`M`）的文件是 `pyproject.toml`**，改动内容只是加了一段 pytest 配置：
+（其中 63 个文件、约 8.0k 行是 §8 引用的 Task C 产物 —— `outputs/harness/` 下的汇总指标、导出的 harness 与完整编辑日志、选择日志，以及 `docs/findings/transfer-cases.md` 逐行分析的那 6 份轨迹。轨迹全集与 wandb 目录仍然不入库，见 `.gitignore` 末尾的说明。）
+
+其中 **被修改（`M`）的上游文件只有两个**。一个是 `.gitignore`（末尾追加若干反向排除，把上面那批 Task C 产物放进库，其余 run 输出仍然排除）；另一个是 `pyproject.toml`，改动内容只是加了一段 pytest 配置：
 
 ```toml
 [tool.pytest.ini_options]
@@ -44,7 +49,7 @@ testpaths = ["tests"]
 pythonpath = [".", "alphaapollo/core/generation"]
 ```
 
-其余 42 个文件全部是新增（`A`）。没有任何一个上游的求解/环境/verifier/工具文件被触碰 —— 这是刻意的约束：Task C 要求三组实验共享**同一个冻结 solver**，改上游文件就无法论证"baseline 还是原来那个 baseline"。
+其余 138 个文件全部是新增（`A`）。没有任何一个上游的求解/环境/verifier/工具文件被触碰 —— 这是刻意的约束：Task C 要求三组实验共享**同一个冻结 solver**，改上游文件就无法论证"baseline 还是原来那个 baseline"。
 
 需要改上游行为的两处，都通过**类级 monkey-patch**（`accounting.install_accounting` 补 `Agent.get_action_from_gpt`）在运行期完成，`uninstall()` 后复原（`alphaapollo/core/harness/accounting.py`）。
 
@@ -68,8 +73,8 @@ alphaapollo/core/harness/                     # Task A/B 全部机制（不含�
 
 alphaapollo/core/generation/evolving/evolving_harness_main.py   # Task B 驱动器 + CLI
 alphaapollo/data_preprocess/prepare_harness_stream.py           # AIME 数据流构建
-tests/harness/                                                  # 405 个测试
-docs/design/cross-problem-skill-harness-design.md               # 设计文档（部分已过时，见 §10）
+tests/harness/                                                  # 571 个测试
+docs/design/cross-problem-skill-harness-design.md               # 设计文档（部分已过时，见 §11）
 requirements-harness.txt                                        # 两个额外依赖
 scripts/run_tests.sh
 ```
@@ -155,10 +160,10 @@ python -m pytest tests/harness/ -q
 实测输出：
 
 ```
-405 passed in 4.63s
+571 passed in 5.22s
 ```
 
-各文件测试数：`test_reflect` 57、`test_arms` 36、`test_driver` 34、`test_evolver` 33、`test_store_apply` 33、`test_loader` 27、`test_accounting` 23、`test_prepare_stream` 23、`test_tracker` 22、`test_selector` 20、`test_topic` 19、`test_guard` 18、`test_store_select` 16、`test_store_persistence` 12、`test_export` 11、`test_schema` 10、`test_render` 5、`test_smoke` 4。
+各文件测试数：`test_reflect` 59、`test_configs` 56、`test_driver` 45、`test_evolver` 43、`test_store_apply` 38、`test_arms` 38、`test_loader` 31、`test_resume` 29、`test_tracker` 27、`test_analysis` 25、`test_prepare_stream` 23、`test_accounting` 23、`test_selector` 20、`test_topic` 19、`test_runtime_cleanup` 19、`test_guard` 18、`test_store_select` 16、`test_store_persistence` 12、`test_export` 11、`test_schema` 10、`test_render` 5、`test_smoke` 4。
 
 单元测试**不触碰网络栈**：`Agent.__init__` 会真的构造 `openai.OpenAI(...)`，测试里用 monkeypatch 换掉 agent 模块内的 `OpenAI` 名字（见 commit `5580627`）。这是因为曾经出现过"同一套测试在 A 机 97 passed、在 B 机 84 passed + 13 errors"，差别纯粹来自 shell 里有没有 SOCKS 代理变量。
 
@@ -301,7 +306,7 @@ selector 模型由 `harness.selector_model_cfg` 单独配置（本项目用 `qwe
 | **general 层必须跨 ≥2 道题** | `store.py:405`，reject reason `general_needs_two_problems` |
 | **curator 只能改自己那一层** | `store.py:379`，reject reason `wrong_layer` |
 
-后两条都是**真实运行中观察到模型违反 prompt 指令**之后补的，见 §9-D。
+后两条都是**真实运行中观察到模型违反 prompt 指令**之后补的，见 §10-D。
 
 ### 4.5 防泄漏设计
 
@@ -435,8 +440,7 @@ python -m alphaapollo.data_preprocess.prepare_harness_stream \
 
 ## 7. 实验设计与运行命令
 
-> **⚠️ 三组实验尚未运行。本节给出的是设计、配置与命令 —— 没有任何结果数字。**
-> 基础设施（配置、运行脚本、断点续跑、分析器）已就绪并在真机上验证过，见 §11。
+> **本节是设计、配置与运行命令。三组实验已全部跑完 —— 结果数字在 §8，尚未完成的部分在 §12。**
 
 ### 7.1 三条臂
 
@@ -673,7 +677,184 @@ wandb 是**可选**的（任务书从未要求）：六个 run（3 臂 × adapta
 
 ---
 
-## 8. 代表性 skill 演化记录（真实 trace，**烟囱测试**，非 Task C 实验）
+## 8. Task C 实验结果
+
+本节的每一个数字都可以从 `outputs/harness/` 重新算出来。汇总表由 `python -m alphaapollo.core.harness.analysis --root ./outputs/harness --out_dir ./outputs/harness/report` 生成（`report/results.md` 与 `results.json`），最终 harness 由 `export-evo/` 给出。
+
+### 8.1 运行状态
+
+| | |
+|---|---|
+| run | 6 个：3 臂 × {adaptation, held-out}，全部跑完 |
+| 题量 | adaptation 144（stream 149 题，尾部 5 题因 `loader.batches(drop_last=True)` 被**三臂同等**丢弃）；held-out 30（AIME 2025 全年） |
+| **丢题** | **0 / 0 / 0**。对照 §9 烟囱测试的 25% 丢题率 —— `NO_PROXY` 那条修复是有效的 |
+| `calls/unscoped` | 6 个 run 全为 **0**，solver/管理开销拆分可信 |
+| 测试 | `571 passed in 5.22s` |
+| resume | 三个 adaptation run 各 18 批、held-out 各 4 批，`progress.json` 的 fingerprint 一致 |
+
+held-out 的 evo 臂管理调用**只有 `selector`、没有 `reflect`/`curator`**（§8.6 表），这是"最终 harness 确实被冻结"的直接证据，而不是靠配置声明。
+
+### 8.2 主结果
+
+| arm | adaptation Pass@1 (round 0) | adaptation 最终 | held-out Pass@1 | **held-out 最终** |
+|---|---|---|---|---|
+| Baseline | 22.2% (32/144) | 21.5% (31/144) | 13.3% (4/30) | 10.0% (3/30) |
+| Raw Experience | 16.7% (24/144) | 21.5% (31/144) | 23.3% (7/30) | **23.3% (7/30)** |
+| **Evo-Harness** | 23.6% (34/144) | **24.3% (35/144)** | 13.3% (4/30) | 16.7% (5/30) |
+
+配对 McNemar 精确检验（同题比较）：
+
+| 比较 | adaptation | held-out |
+|---|---|---|
+| baseline vs raw | p = 1.000（9 / 9 不一致） | p = 0.125（0 / 4） |
+| baseline vs evo | p = 0.481（7 / 11） | p = 0.625（1 / 3） |
+| raw vs evo | p = 0.503（8 / 12） | p = 0.625（3 / 1） |
+
+**一项都不显著。** Evo 在 adaptation 上的 +2.8 个百分点等于 4 道题，而 §12.1 记录的本系统噪声底是 ±2 题 / 20 题 ≈ ±3.6 个百分点 —— 这个优势完全落在噪声里。held-out 上 **Raw 反而赢了 Evo**（23.3% vs 16.7%），只有 4 对不一致样本，同样是噪声，但它是必须主动解释的数字而不是可以略过的数字。
+
+### 8.3 adaptation 上随时间的变化（窗口 = 25）
+
+| 窗口 | 0-24 | 25-49 | 50-74 | 75-99 | 100-124 | 125-143 |
+|---|---|---|---|---|---|---|
+| baseline | 24.0% | 32.0% | 16.0% | 28.0% | 20.0% | 5.3% |
+| raw | 20.0% | 28.0% | 24.0% | 32.0% | 8.0% | 15.8% |
+| **evo** | 28.0% | 32.0% | 16.0% | 36.0% | 16.0% | 15.8% |
+
+**没有学习曲线。** 如果 skill 编译在累积，evo 的后段窗口应当高于前段 —— 它没有，而且三条曲线的形状几乎一致（同升同降），说明波动由**题目顺序**驱动而非由 arm 驱动。这是本实验最直接的负面证据，比任何一个总分都重要。
+
+### 8.4 per-topic（最终正确率）
+
+| topic | n | adaptation base / raw / **evo** | n | held-out base / raw / **evo** |
+|---|---|---|---|---|
+| algebra | 30 | 36.7% / 36.7% / **53.3%** | 9 | 0.0% / 22.2% / 11.1% |
+| number_theory | 32 | 28.1% / 28.1% / **21.9%** | 5 | 40.0% / 40.0% / 20.0% |
+| combinatorics | 33 | 12.1% / 9.1% / **15.2%** | 9 | 11.1% / 11.1% / 11.1% |
+| geometry | 49 | 14.3% / 16.3% / **14.3%** | 7 | 0.0% / 28.6% / 28.6% |
+
+唯一超出噪声量级的移动是 **adaptation / algebra：36.7% → 53.3%（+16.7pp, n=30）**。它恰好是 `sk_0001` 所在的领域，而 `sk_0001` 是全场效用最高、且**唯一从未被编辑过**的 skill（§8.7）。这是一个**事后**观察到的、样本量 30 的相关，应当作为假设写进 slides，不能作为结论。held-out 上 geometry 的 0% → 28.6% 只有 7 题、2 道题的差别，不承载信息。
+
+### 8.5 harness 规模与增长
+
+| 跑完第 N 题 | 7 | 31 | 55 | 79 | 103 | 127 | 143 |
+|---|---|---|---|---|---|---|---|
+| general | 1 | 3 | **5** | 5 | 5 | 5 | 5 |
+| topic | 5 | 9 | 9 | 9 | 10 | 11 | 11 |
+| 总 token | 398 | 768 | 913 | 891 | 912 | 977 | **1003** |
+| 每条均长 | 66 | 64 | 65 | 64 | 61 | 61 | 63 |
+
+**增长控制按设计工作**：general 层第 55 题起顶到 `caps.general = 5` 就不再增长，总量 144 题只累积到 1003 token，每条 skill 的长度稳定在 60 余 token 而没有膨胀。Task A 要求的"显式有界增长"是达成的。
+
+curator 决策（`export-evo/summary.json`）：**209 次决策，接受 89、拒绝 120**。
+
+| op | 提出 | 接受 |
+|---|---|---|
+| ADD | 17 | 16 |
+| MERGE | 105 | 56 |
+| REVISE | 17 | 17 |
+| SKIP | 70 | —（SKIP 即不改） |
+
+拒绝原因只有三种：`skipped` 70、**`wrong_layer` 49**、`capacity_full` 1。`wrong_layer` 占全部决策的 **23%** —— curator 试图改另一层的 skill、被 `e62ea41` 那道闸门挡下。这**不是质量判决，是 prompt 契约的结构性失败**：近四分之一的管理预算烧在一类本可以在 prompt 层面消除的错误上。
+
+### 8.6 开销（solver 与管理**分开报**）
+
+`metrics.jsonl` 里的 `calls/*`、`tokens/*` 是**累积值**，跨 batch 行求和会得到约 9.5 倍的虚高数字 —— 取每个 run 的最后一行，或直接用 `results.json`。
+
+**adaptation（每臂 144 题）**
+
+| arm | solver 调用 | 管理调用 | 合计 | 调用/题 | 管理占比 | solver token | 管理 token | **总 token** |
+|---|---|---|---|---|---|---|---|---|
+| baseline | 1468 | 0 | 1468 | 10.2 | 0% | 3.00M | 0 | 3.00M |
+| raw | 1448 | 144 | 1592 | 11.1 | 9.0% | 3.14M | 0.12M | 3.25M |
+| **evo** | 1228 | **321** | 1549 | 10.8 | **20.7%** | 2.33M | 0.29M | **2.62M** |
+
+evo 的 321 次管理调用：`selector` 136、`reflect` 109、`topic_curator` 58、`general_curator` 18。
+
+**held-out（每臂 30 题，frozen）**
+
+| arm | solver | 管理 | 合计 | 调用/题 |
+|---|---|---|---|---|
+| baseline | 309 | 0 | 309 | 10.3 |
+| raw | 298 | **0** | 298 | 9.9 |
+| evo | 263 | 30（全部是 `selector`） | 293 | 9.8 |
+
+**注入 context 的 token**
+
+| arm / phase | 总量 | 每题均值 | 非零均值 | 最大 | 每题 skill 数 | 零注入题 |
+|---|---|---|---|---|---|---|
+| evo / adaptation | 26,648 | **185.1** | 195.9 | 367 | 3.04 | 8 |
+| raw / adaptation | 56,128 | **389.8** | 412.7 | 540 | — | 8 |
+| evo / held-out | 6,264 | 208.8 | 208.8 | 369 | 3.57 | 0 |
+| raw / held-out | 12,244 | 408.1 | 408.1 | 485 | — | 0 |
+
+**六个 run 总计 5,509 次调用 / 10,622,564 token。**
+
+三点值得写进 slides：
+
+1. **evo 加了 20.7% 的管理调用，总 token 反而比 baseline 少 12.8%** —— solver 输出从 1.66M 降到 1.06M（−36%），注入 skill 让 rollout 变短了。"Evo 更贵"这个直觉在本数据上只对**调用次数**成立（+5.5%），对 token 不成立。
+2. **预算上限是 800 token，evo 实际只用到 185（23%）；Raw 注入量是它的 2.1 倍，held-out 上还赢了。** 所以 evo 的劣势不能归因于"注入得不够多"。
+3. **两臂在 adaptation 上各有 8 题零注入，正好是 batch 0 的 p_0–p_7**（harness 当时为空）。这是"一道题不可能被自己产生的 skill 影响"（§5.2）在数据上的直接证据。
+
+> **一个产物口径上的坑**：held-out 的 `selection_log.jsonl` 有 **174 行不是 30 行** —— `run_experiments.sh` 把 adaptation 的 store 整个拷过去，那 144 行选择记录跟着带了过来，held-out 只是往后追加。上表取的是 `[-30:]`。直接对该文件求和会把 adaptation 的开销算进 held-out。
+
+### 8.7 skill 使用频次
+
+| skill | 注入次数 | 注入且做对 | 占题数 | 被接受编辑次数 |
+|---|---|---|---|---|
+| `sk_0006` (general) | **118** | 27 (22.9%) | **81.9%** | 10 |
+| `sk_0008` | 74 | 20 (27.0%) | 51.4% | 12 |
+| `sk_0007` | 47 | 7 (14.9%) | 32.6% | 3 |
+| `sk_0012` | 31 | 6 (19.4%) | 21.5% | 14 |
+| `sk_0013` | 31 | 5 (16.1%) | 21.5% | 4 |
+| `sk_0003` | 28 | 6 (21.4%) | 19.4% | 4 |
+| `sk_0014` | 26 | 6 (23.1%) | 18.1% | 7 |
+| **`sk_0001`** | 18 | **9 (50.0%)** | 12.5% | **1** |
+| `sk_0011` | 16 | 2 (12.5%) | 11.1% | 11 |
+| `sk_0015` | 15 | 2 (13.3%) | 10.4% | 7 |
+| `sk_0010` / `sk_0009` / `sk_0002` | 12 / 11 / 9 | 2 / 3 / 2 | — | 5 / 5 / 2 |
+| `sk_0005` / `sk_0016` | 1 / 1 | 0 / 0 | 0.7% | 2 / 1 |
+| `sk_0004` | **0** | 0 | 0% | 1 |
+
+"注入且做对"是**相关而非归因** —— 一条专挑简单题的 skill 不用帮忙也会好看。两个结构性问题：
+
+- **`sk_0006` 被注入到 82% 的题上，命中率 22.9% —— 和 base rate 一模一样。** 它是一条占预算的 no-op，却占了 4/5 题的注入槽。原因见 §11.3：它的 trigger 在 10 次编辑中漂移成了"When multiple constraints or conditions are present in a problem"这种对几乎任何 AIME 题都成立的空话，选择器因此无法区分。
+- **`sk_0004` 一次都没被选中**，却始终占着 `isosceles_triangle_counting` 的 topic 槽位。harness 没有淘汰机制。
+
+至于"编辑次数越多质量越差"这个诱人的解释：整体上**只有很弱的证据**（≤4 次编辑的 skill 平均效用 24.9%，≥5 次的 20.3%），而且这个差距几乎完全由 `sk_0001` 一个点撑着，`sk_0008` 被编辑 12 次仍有 27.0%。**漂移这个结论应当靠 §11.3 的文本证据来立，不要用这个相关性去论证。**
+
+### 8.8 迁移案例
+
+完整的逐轨迹分析在 **[`docs/findings/transfer-cases.md`](docs/findings/transfer-cases.md)**。三个案例的摘要：
+
+**正向 · p_84**（number_theory，注入 `sk_0001`/`sk_0006`/`sk_0008`，188 token）。baseline 答 37、evo 答 239（对）。可复核的行为差异是**搜索上界 `range(1,100)` vs `range(1,1000)`**（真解 78 和 161，上界 100 必漏 161），外加 baseline **凭空编造了工具返回值**而 evo 读取了返回值并逐个手算验证。`sk_0006` 的 "no omissions in case analysis" 与放宽上界之间有合理联系，但**这是 temperature=0.7 的单次采样，因果归因未经证实** —— 要坐实需要在不注入条件下重复采样 p_84。
+
+**负向 · p_105**（"所有三位回文数的算术平均"，GT 550）。evo **round 0 答对了 550**，round 1 改成 549.5 而错。事件链：evo 那条正确答案只有 756 字符 → verifier 判"没有给出推理过程"并主动断言 *"The correct mean is 549.5"* → policy 在 round 1 采纳该数字并为它倒推出一套错误算术 → verifier 在 round 1 **自己翻供**回 550，但 `pass_final` 取最后一轮，已经来不及。注入的三条 skill 没有把模型带向错误的**数学方法**，它们施加的是一种"再验证一遍"的**风格压力**，作用在一道不需要验证的题上。
+
+**系统性 · 上面那条链不是孤例。** 定义 loss = round 0 对、最终错：
+
+| arm | loss | gain | 净 | 被毁题的 round-0 消息均长 | 全部题均长 |
+|---|---|---|---|---|---|
+| baseline | **8** | 7 | −1 | 1827 | 2575 |
+| raw | **1** | 8 | **+7** | 766 | 2491 |
+| evo | **6** | 7 | +1 | 1302 | 2353 |
+
+三条结论：(a) **题内演化轮在 baseline 上净负**（毁掉 8 条、救回 7 条），这是上游行为、三臂共同的噪声源；(b) **Raw 臂在 adaptation 上追平 baseline 靠的不是多做对题，而是少毁题** —— 它 round-0 比 baseline 低 5.5pp，最终却打平，全部差距来自 loss 从 8 降到 1；(c) 三臂一致地，**被毁掉的题其 round-0 最终消息明显更短**，因为 verifier 按"看得见的推理"打分，简短的正确答案会被判成"没有推理"，verifier 随即给出自己（常常是错）的数字。
+
+### 8.9 对 null result 的分析
+
+任务书明确写了"Evo-Harness 赢过 baseline 不是及格线，但 null result 必须被分析"。按它列出的六个方向：
+
+1. **任务相似度。** AIME 跨年之间的题目共享的是**领域**而非**可复用的解题程序**。harness 里真正具体的 skill（如 `sk_0001` 的多项式分解条件）只在 18/144 题上被选中，而 82% 的题拿到的是通用套话。这可能是最根本的限制：AIME 的设计初衷就是每题需要一个新想法，而 Evo-Harness 的论文场景（SkillBench 等）有可复用的操作流程。
+2. **skill 质量。** 见 §11.3：MERGE/REVISE 导致 trigger 与 lesson 语义脱钩，`sk_0006` 最终的 trigger 是泛化的"ensure all possible cases"而 body 讲的是圆的切线。这是**可修的工程缺陷**，不是方法本身的问题。
+3. **选择错误。** `sk_0006` 注入率 82%、效用等于 base rate；`sk_0004` 注入率 0%。选择器不是选错了，而是**在漂移后的 trigger 上无法区分** —— 修好 (2) 才谈得上评价 (3)。
+4. **context 干扰。** 确有其事，但机制出乎意料：不是知识层面的误导，而是 §8.8 的**风格层面**干扰 —— 注入使 evo 把验证前置、最终消息变短（中位数 2280 vs baseline 2596），而短消息更容易被 verifier 误判，进而在下一轮被改坏（evo loss 6 vs raw 1）。
+5. **verifier 反馈质量 —— 这一项比预想的严重得多。** 在 policy 确实答对的那些轮次里，verifier 判它错的比例是：baseline **21/63 = 33%**、raw **14/55 = 25%**、evo **22/69 = 32%**（`summary.verifier_correctness_stats` 三臂累计）。**policy 答对时，verifier 大约每三次就否定一次**，而且常常附带一个具体的错误数字（p_105 里它断言 549.5，下一轮又自己翻供回 550）。编译 skill 所依赖的成败标签本身就带着这个量级的噪声；更糟的是这噪声不只污染 skill，它还经由题内演化轮**直接破坏最终答案**（§8.8 的 loss 列）。
+6. **token 开销。** **不是**瓶颈：evo 只用掉 800 预算中的 185 token，总 token 还比 baseline 少 12.8%。可以排除这一项。
+
+**最诚实的总结**：本实验证明了**机制是闭环的**（skill 来自真实轨迹、被组织、有界增长、确实影响后续题目、全过程可审计），但**没有证明编译出的 skill 有用**。最大的单一嫌疑不是"跨题迁移在 AIME 上不成立"这个方法论结论 —— 而是在能检验它之前，两个工程缺陷（语义漂移、23% 的 `wrong_layer` 浪费）与一个测量缺陷（verifier 噪声经由题内演化轮破坏最终答案，且与消息长度耦合）已经把信噪比压到了差异无法分辨的水平。**下一次实验该修的是这三项，而不是换一个更大的模型。**
+
+---
+
+## 9. 代表性 skill 演化记录（真实 trace，**烟囱测试**，非 Task C 实验）
 
 以下全部来自一次**真实的 12 题 evo 臂运行**，跑在真实 adaptation stream 的前 12 道题上，`batch_size=4`、3 个 batch，对接 DashScope 的 `qwen3-8b`。
 
@@ -681,7 +862,7 @@ wandb 是**可选**的（任务书从未要求）：六个 run（3 臂 × adapta
 > 1. 这是**烟囱测试**，不是 Task C 实验，12 题不构成任何结论。
 > 2. 该次运行执行的是**进程启动时**的代码，即 commit `064e799` 与 `e62ea41` **之前**的版本。因此它的 harness 演化 trace **仍然展示着这两个 commit 所修复的行为**（见下）。
 
-### 8.1 运行层面的真实数字
+### 9.1 运行层面的真实数字
 
 | | |
 |---|---|
@@ -696,7 +877,7 @@ wandb 是**可选**的（任务书从未要求）：六个 run（3 臂 × adapta
 | 最终 harness | 3 general + 2 topic（`counting_with_constraints`、`coordinate_geometry_setup`），共 292 token |
 | harness edit | 13 条 log 行：5 ADD、6 MERGE、1 REVISE、1 SKIP |
 
-### 8.2 一条 skill 的真实演化路径（`sk_0001`）
+### 9.2 一条 skill 的真实演化路径（`sk_0001`）
 
 ```
 batch 0 end: ADD    sk_0001  actor=topic_curator  source_problems=[0]   accepted
@@ -709,7 +890,7 @@ batch 1 end: MERGE  sk_0001  actor=topic_curator  source_problems=[6]   accepted
 
 即：它由 p0 的失败产生 → 被注入给 p4–p7 → p5/p6/p7 的失败又反过来强化了它。这是一条**完整闭合**的跨题回路：skill 来自真实轨迹、被组织、并实际影响了后续题目。
 
-### 8.3 同一份 trace 暴露的两个缺陷（已修，修复不在该次运行的代码里）
+### 9.3 同一份 trace 暴露的两个缺陷（已修，修复不在该次运行的代码里）
 
 **(a) general 层退化成 topic 层的副本。** 该次 batch 0 产出的三条 "general" skill，evidence 分别是 `p_0`、`p_2`、`p_3` —— **三条单题教训被归档成了跨任务模式**。更糟的是其中两条与同 batch、同候选产出的 topic skill **逐字重复**：
 
@@ -729,7 +910,7 @@ batch 1 end: MERGE  sk_0001  actor=topic_curator  source_problems=[6]   accepted
 
 而 `sk_0001` 自己的文件写的是 `level: "topic"`。`GeneralCurator` 只被展示了 general 层的 skill，却**幻觉出了一个 topic skill 的 id**，而 `_apply_one` 按 id 查找目标、从不检查目标在哪一层，于是照改不误。后果不是美观问题：两个 curator 把内容和 evidence 往同一批 skill 里累加，两层不再独立 —— 论文报告的 General-Only / Topic-Only 消融会在"看起来在量两层"的同时**实际上在量一团纠缠**。修复（commit `e62ea41`）：`MERGE` / `REVISE` 校验目标层级（topic 层还要校验 bucket），不符则拒，reject reason `wrong_layer`。
 
-### 8.4 另一处真实故障：网络中断如何被吸收
+### 9.4 另一处真实故障：网络中断如何被吸收
 
 该次运行的最后一个 batch 遭遇本机代理中断（`openai.APIConnectionError` / `ConnectError: [Errno 61] Connection refused`）：
 
@@ -747,13 +928,13 @@ WARNING: reflect failed for problem 8; skipping candidate
 
 这正是 §5.4 与 §5.6 想要的行为：**skill 更新失败不会破坏底层 baseline，也不会用空轨迹污染 harness**。
 
-### 8.5 早期的 4 题端到端运行
+### 9.5 早期的 4 题端到端运行
 
 在此之前还跑过若干次 4 题端到端运行，其中一次跑在**把所有 topic 标签剥光**的 stream 上，0 errors、39 solver + 6 management 调用、编译出 3 条 skill、topic 全部由模型命名 —— 这正是"方法不再需要逐题 topic 标注"的实证。同一次运行里 selector 对 batch 1 的两道题都回了 `NONE`，而且回得对：当时 harness 里只有 inradius 和周期函数两条 skill，那两道题是概率和代数。
 
 ---
 
-## 9. 修改内容与溯源
+## 10. 修改内容与溯源
 
 按**主题**分组（而非时间顺序），每条给出可 `git show` 的 commit。commit message 本身写得很长，记录的是当时的推理过程，是本节的一手来源。
 
@@ -800,7 +981,7 @@ WARNING: reflect failed for problem 8; skipping candidate
 | `62b024b` | DashScope 对 qwen3 hybrid-reasoning 模型的非流式调用**直接拒绝**，除非请求体带 `enable_thinking: false`；以及上游线程池吞掉 role。 |
 | `93b6609` | 钉住 `scipy` 与 `httpx[socks]`（见 §2.2）。 |
 | `9f51c21` | wandb 0.30 在"已安装但从未登录"（新 checkout 的默认状态）下，`wandb.init()` 会阻塞约 4 s 等交互式 API-key 输入，然后抛 **`KeyboardInterrupt`** —— 那是 `BaseException`，`except Exception` 接不住，于是 tracker 构造函数把整个进程带走，而为这种情况准备的 jsonl 回退**一行都没写出来**。现在改为 init 之前先查凭证（光是走到 init 就意味着阻塞 + 往 run log 里倒注册横幅），并显式 catch `KeyboardInterrupt`。 |
-| `064e799` / `e62ea41` | general 层跨题数强制、curator 越层改写 —— 完整叙述见 §8.3。 |
+| `064e799` / `e62ea41` | general 层跨题数强制、curator 越层改写 —— 完整叙述见 §9.3。 |
 
 ### E. 可审计性与导出
 
@@ -822,43 +1003,65 @@ WARNING: reflect failed for problem 8; skipping candidate
 
 ---
 
-## 10. 已知限制与失败尝试
+## 11. 已知限制与失败尝试
 
-### 10.1 地板效应 —— 对 Task C 最实际的威胁
+### 11.1 地板效应 —— 事前的担心，事后**基本被证实**
 
-12 题烟囱测试里 `qwen3-8b` 解对 **2 题**。若这个量级在 149 题的 adaptation stream 上大致成立，那么：
+跑 Task C 之前本节预测：`qwen3-8b` 的正确率太低、held-out 只有 30 题，"即使方法有效，这个配置也大概率给出 null result"。实测结果（§8.2）与该预测一致，且可以把它写得更精确：
 
-- **held-out 只有 30 题**。在约 15% 的基线正确率上，三条臂之间的差异会被 30 题的采样噪声完全淹没 —— 单题就是 3.3 个百分点。
-- Reflect 只从失败学，所以失败多反而给了 harness 更多输入；但**成功信号太稀疏**，`utility() = (n_selected_success + 1) / (n_selected + 2)` 这个效用估计几乎学不到东西（烟囱测试最终所有 skill 的 utility 都在 0.2–0.5 之间徘徊，基本还是先验）。
-- 因此**即使方法有效，这个配置也大概率给出 null result**。任务书明确说"Evo-Harness 赢过 baseline 不是通过标准"，但这意味着 null result 的分析必须把地板效应放在第一位，而不是归因于"skill 质量差"。
+- **held-out 三臂最终正确率是 10.0% / 23.3% / 16.7%，n = 30 —— 单题 = 3.3 个百分点。** 三个配对 McNemar 检验的不一致样本数分别只有 4、4、4，p ≥ 0.125。这个尺寸的 held-out **在结构上就无法**分辨 arm 之间的差异，与方法是否有效无关。
+- **成功信号稀疏这一条完全应验。** `utility() = (n_selected_success + 1) / (n_selected + 2)` 在 144 题之后给出的效用仍然贴着先验：15 条被选中过的 skill 里，13 条的命中率落在 12.5%–27.3% 这个和 base rate（约 22%）无法区分的带里（§8.7）。唯一跳出来的 `sk_0001`（50%，n=18）也可能只是它恰好被选到了简单题上。
+- 但**地板效应不再是排在第一位的解释**。§8.9 给出了两个更具体、更可修的嫌疑：skill 文本的语义漂移（§11.3）与 verifier 噪声经由题内演化轮破坏最终答案（§8.8）。地板效应决定了"分辨不出差异"，而这两项决定了"即使样本量足够也未必分辨得出" —— 写 null result 分析时两者要分开讲。
 
-### 10.2 标注器的 geometry 偏差
+### 11.2 标注器的 geometry 偏差
 
 见 §6.2。`qwen3-32b` 一致率 83%，但 n=30 意味着约 ±13pp 的区间。更具体的问题是：adaptation split 的 geometry 占比 35%，人工标注的 held-out split 只有 23% —— **per-topic 拆解表必须带这个 caveat**，否则会把标注偏差读成分布偏移。
 
-### 10.3 跨层重复与 topic 粒度
+### 11.3 语义漂移、跨层重复与 topic 粒度
 
-- **跨层重复**：§8.3(a) 里 topic 层与 general 层出现逐字重复的 skill，两份拷贝还要抢同一份注入预算。`064e799` 用"general 必须跨 ≥2 题"拦住了最明显的一类，但**它拦的是来源，不是内容** —— 两条来自不同题目的 general skill 仍然可能语义重复，目前只能靠 curator 自己 MERGE。
+**语义漂移（Task C 暴露的头号缺陷）。** MERGE 与 REVISE 会整条改写 skill 的 `trigger` / `lesson` / `failure_mode`，没有任何机制保证改写后 trigger 仍然描述 lesson。144 题之后这成了系统性的：
+
+`sk_0006` 的完整轨迹（`export-evo/evolution.jsonl`，10 次 accepted 编辑）：
+
+| batch | op | trigger |
+|---|---|---|
+| b0 | ADD | When solving a problem, ensure all possible cases are considered… |
+| b3 | REVISE | When multiple conditions or constraints are present in a problem. |
+| b6 | REVISE | When multiple constraints or conditions are present in a problem. |
+| b14 | REVISE | When multiple constraints are present in a problem. |
+| b15 | REVISE | When multiple constraints or relationships exist in a problem. |
+| **b16** | **MERGE** | **When a circle is tangent to multiple sides of a figure and intersects a diagonal.** |
+
+两个方向的退化同时发生：前半程 trigger 被反复"泛化"成对几乎任何 AIME 题都成立的空话，末尾一次 MERGE 又把一条**圆的切线**的具体几何 lesson 并了进来。最终导出的 `harness.md` 里这条 skill 的标题是泛化的 `when-solving-a-problem-ensure-all-possible-cases`，body 讲的却是坐标几何切线 —— **trigger 与 lesson 已经不描述同一件事**。`sk_0013`、`sk_0010` 是同样的模式。
+
+后果是可测的：`sk_0006` 被注入 **118/144 题（82%）**，命中率 22.9% —— 等于 base rate，是一条占满注入槽的 no-op（§8.7）。选择器并非选错，而是**在漂移后的 trigger 上无从区分**。
+
+两个现成的修法（都未实现）：(a) MERGE/REVISE 之后校验 trigger 与 lesson 的一致性，不一致则拒绝；(b) 给每条 skill 记录编辑次数，超过阈值就冻结或强制分裂。
+
+**`wrong_layer` 浪费。** 209 次 curator 决策里 **49 次（23%）**因 curator 试图改另一层的 skill 而被 `e62ea41` 的闸门拒掉。闸门本身是对的（它防的是越层改写），但被拒的决策消耗了完整的一次模型调用。这是 prompt 契约的问题：curator 没有被有效地约束到只看自己那一层的候选。
+
+- **跨层重复**：§9.3(a) 里 topic 层与 general 层出现逐字重复的 skill，两份拷贝还要抢同一份注入预算。`064e799` 用"general 必须跨 ≥2 题"拦住了最明显的一类，但**它拦的是来源，不是内容** —— 两条来自不同题目的 general skill 仍然可能语义重复，目前只能靠 curator 自己 MERGE。Task C 证实这没被解决：p_68 一次注入的 5 条 skill 里有 4 条（`sk_0006`/`sk_0012`/`sk_0013`/`sk_0014`）说的是同一件事（"系统枚举、逐条校验、不要假设"），311 token 里大部分是重复内容。
+- **没有淘汰机制**：`sk_0004` 在 144 题里**一次都没有被选中**，却始终占着 `isosceles_triangle_counting` 的 topic 槽位直到最后。cap 限制了总量，但没有任何压力把无用的 skill 挤出去。
 - **topic 名字偏窄**：一次 4 题运行里模型给出的 topic 是 `inradius_calculation`。这种粒度的 bucket 几乎不可能有第二道题命中，topic 层会碎成"每个 bucket 一条 skill"。`existing_topics` 传入就是为了缓解这一点（让模型复用已有名字），但它只是一个**提示**，没有强制。烟囱测试里产出的 `counting_with_constraints` / `coordinate_geometry_setup` 粒度明显更合理，说明这在很大程度上取决于模型当次的发挥。
 
-### 10.4 若干缺陷在 300+ 通过的测试下完全不可见
+### 11.4 若干缺陷在 300+ 通过的测试下完全不可见
 
 `2aedcb1`（`data_source` KeyError）、`9e1b554`（虚构的 `step_outputs` schema）、`70e77b6`（从空轨迹编译 skill）、`62b024b`（线程池吞 role）、`064e799` / `e62ea41`（模型忽略 prompt 约束）—— 这些都是在测试套件已有几百个通过用例时，**第一次接上真实 API** 才暴露的。共同模式有两种：
 
-1. **手写 fixture 与手写实现共享盲点**（见 §9-F）。补救是 `tests/harness/fixtures/real_problem_payload.json` —— 本包第一个取自真实执行的 fixture。
+1. **手写 fixture 与手写实现共享盲点**（见 §10-F）。补救是 `tests/harness/fixtures/real_problem_payload.json` —— 本包第一个取自真实执行的 fixture。
 2. **韧性机制掩盖配置错误**。每一层降级都工作正常，结果是一个彻底坏掉的 run 安静地"完成"。补救是首 batch 断路器与 frozen-空状态前置检查 —— 它们都是**故意不降级**的地方。
 
 这一点应当写进 slides：本项目最有价值的工程结论之一，是"降级"和"可观测"必须成对设计。
 
-### 10.5 其他已知问题
+### 11.5 其他已知问题
 
 - **~~`problem_shape` 恒为空串~~ —— 已删除（`474de1b`）。** 它曾是 Reflect 白名单里的一个字段，但 `prepare_harness_stream.py` 写死 `""`，149 道题全部为空，于是每次真实 Reflect 调用都发出一行**有标签、无内容**的 `Problem shape: `。提示词里的空字段不是中性的，它读起来像"模型本该知道却缺失的信息"。选择删除而非填充：论文 Appendix E.1 的 proposal 输入清单里没有这一项，而模型自己命名的 `TOPIC` 已经回答了"这是什么类型的题"；填充它要多花 149 次调用去换方法并不要求的字段。
-- **`run()` 本身没有被测试覆盖。** `run_stream` / `extract_result` / `assert_no_gt_tool_call` 被 `tests/harness/test_driver.py` 用最小和完全真实的两种 payload 覆盖，但 `run()` 这段配置装配代码没有。它已经通过 scratch 配置对真实 API 跑通过（§8），`run()` 的 docstring 里那句 "has never been invoked against a real, running `run_problem`" 曾经因此过时，已在 `474de1b` 更正为实际的运行记录。
+- **`run()` 本身没有被测试覆盖。** `run_stream` / `extract_result` / `assert_no_gt_tool_call` 被 `tests/harness/test_driver.py` 用最小和完全真实的两种 payload 覆盖，但 `run()` 这段配置装配代码没有。它已经通过 scratch 配置对真实 API 跑通过（§9），`run()` 的 docstring 里那句 "has never been invoked against a real, running `run_problem`" 曾经因此过时，已在 `474de1b` 更正为实际的运行记录。
 - **`loader.interleave()` 是保留但未被使用的代码。** topic 交错的题流（设计文档 S15.3）在 `e756835` 里被年份序取代，函数和它的 16 个测试都还在，但驱动器不调用它。`474de1b` 在它的 docstring 里写明了这个状态以及保留（而非删除）的理由：若实验显示 skill 的 mint-to-reuse 间隔过长，它是现成的备选排序，且任务书明确允许主题交错。
 - **设计文档 `docs/design/cross-problem-skill-harness-design.md` 部分已过时**：它早于"模型驱动 selector"（`f591906`）与"模型命名 topic"（`4015c8b`）两次改动。**代码与 git log 是权威**，设计文档与之冲突处以前者为准。
 - **`store.select()`（确定性检索）与 `selector.select_skills()`（模型检索）并存。** 前者仅供 store 层测试与参考，实验路径走后者；`store.py` 的 docstring 已明确说明，但读代码的人仍可能走错路。
 
-### 10.6 失败的尝试（都已回滚或取代）
+### 11.6 失败的尝试（都已回滚或取代）
 
 | 尝试 | 为什么放弃 |
 |---|---|
@@ -872,22 +1075,23 @@ WARNING: reflect failed for problem 8; skipping candidate
 
 ---
 
-## 11. 尚未完成
+## 12. 尚未完成
 
 以下内容**尚不存在**，请勿在任何地方当作已完成引用：
 
-1. **三组 Task C 实验，全部。** 本文档里没有任何一个实验结果数字。§8 的 trace 是烟囱测试，`docs/findings/diagnostics/` 里的五个 run 是参数诊断 —— 两者都不是 Task C。
-2. **Slides。**
+1. **Slides。**
+2. **多 seed 重复。** Task C 只跑了**单 seed 一轮**（§12.1）。这是本项目结论强度上最大的单一缺口 —— 三臂之间的差距（2–3 个百分点）正好是单 seed 分辨不了的量级。
+3. **p_84 的重复采样对照。** §8.8 的正向迁移案例给出了可复核的**行为差异**（搜索上界 100 vs 1000），但没有在不注入的条件下把该题重跑 N 次，因此"skill 导致了这个差异"是未证实的假设而非结论。
 
-基础设施部分已经就绪（§7.4–7.6）：七份配置、运行脚本、断点续跑、轨迹落盘、以及覆盖任务书七项要求的分析器。它们**跑通过真机**，但只跑过 8–20 题的小规模验证。
+一项已知的文档欠债（§11.5）：设计文档 `docs/design/cross-problem-skill-harness-design.md` 部分过时。（`run()` docstring 与 `problem_shape` 两项已在 `474de1b` 处理。）
 
-以及一项已知的文档欠债（§10.5）：设计文档 `docs/design/cross-problem-skill-harness-design.md` 部分过时。（`run()` docstring 与 `problem_shape` 两项已在 `474de1b` 处理。）
+### 12.1 会影响结论解读的三件事
 
-### 11.1 会影响结论解读的两件事
+**噪声底是 ±2 题 / 20 题。** 同一份配置重跑两次，final 总数一样但**有 2 道题翻转**（`docs/findings/diagnostics/`，diagA vs diagA2）。折到 144 题约 ±3.6 个百分点。**arm 之间若只差 2–3 个百分点，单 seed 分不出来** —— 论文自己也是 3 次取平均（Appendix F）。Task C 实测的差距恰好落在这个区间（evo 比 baseline 高 2.8pp），三个配对 McNemar 检验也全部不显著（§8.2）。**本实验的所有 arm 间比较都应当以"未能分辨"而非"A 优于 B"陈述。**
 
-**噪声底是 ±2 题 / 20 题。** 同一份配置重跑两次，final 总数一样但**有 2 道题翻转**（`docs/findings/diagnostics/`，diagA vs diagA2）。折到 149 题约 ±3.6 个百分点。**arm 之间若只差 2–3 个百分点，单 seed 分不出来** —— 论文自己也是 3 次取平均（Appendix F）。算力预算必须为多 seed 留份额。
+**seed 不给可复现性。** seed 确实注入了每一次请求（日志里没有 provider 拒绝的警告），但 DashScope 的 seed 是 best-effort：两个 policy 生成参数完全相同的 run，round-0 结果仍会在个别题上不一致。**不要把"三臂 round-0 应逐题一致"写成断言** —— 那会是一个必然误报的 gate。实测三臂 round-0 分别是 22.2% / 16.7% / 23.6%，本来就不一致。
 
-**seed 不给可复现性。** seed 确实注入了每一次请求（日志里没有 provider 拒绝的警告），但 DashScope 的 seed 是 best-effort：两个 policy 生成参数完全相同的 run，round-0 结果仍会在个别题上不一致。**不要把"三臂 round-0 应逐题一致"写成断言** —— 那会是一个必然误报的 gate。
+**`pass_final` 取最后一轮，而最后一轮可能比第一轮更差。** §8.8 测到：round 0 做对、最终做错的题，baseline 有 **8** 道、evo **6** 道、raw **1** 道。这个量级**大于三臂之间的全部差距**，而它由"最终消息有多长"这样一个与 skill 质量无关的变量驱动（verifier 按可见推理打分，简短的正确答案会被误判、随后在下一轮被改坏）。解读任何 arm 间差异之前必须先看这张表。
 
 ---
 
@@ -895,8 +1099,12 @@ WARNING: reflect failed for problem 8; skipping candidate
 
 | 数字 | 来源 |
 |---|---|
-| 405 tests / 4.63s | 本机 `python -m pytest tests/harness/ -q` |
-| 43 files / 13747 insertions / 1 deletion | `git diff --stat 712a04d..HEAD` |
+| 571 tests / 5.22s | 本机 `python -m pytest tests/ -q` |
+| Task C 全部结果表（§8） | `outputs/harness/report/results.{md,json}`（由 `analysis.py` 生成）、`outputs/harness/export-evo/{harness.md,summary.json,evolution.jsonl}`、各 run 的 `metrics.jsonl` 与 `selection_log.jsonl` |
+| McNemar 精确检验 p 值 | 对各 run `metrics.jsonl` 的 `adapt/pass_final` 做逐题配对计算 |
+| 迁移案例的轨迹级细节 | `outputs/harness/{adapt-baseline,adapt-evo}/trajectories/problem_{0084,0105,0068}.json`，分析见 `docs/findings/transfer-cases.md` |
+| loss/gain 与消息长度（8 / 1 / 6，1827 / 766 / 1302 字符） | 遍历三臂 144 份轨迹的 `step_outputs` 计算 |
+| 140 files / 26980 insertions / 2 deletions | `git diff --stat 712a04d..HEAD`（含已入库的 Task C 产物）|
 | adaptation 149、held-out 30、按年与 topic 分布 | 重新读取 `data/harness/*.parquet` 校验 |
 | 标注器一致率 70% / 83% / 83% | `alphaapollo/core/harness/topic.py` 模块 docstring 记录的实测 |
 | 4% 的 AIME 答案恰为常见界数、21.7–27.9% 误拒率 | commit `1ff380f` 记录的对真实 adaptation pool 的测量 |
