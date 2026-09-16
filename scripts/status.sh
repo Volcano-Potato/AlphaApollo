@@ -12,6 +12,21 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 : "${OUT:=outputs/harness}"
 
+# Resolved rather than assumed: this is read from whatever shell happens to be open, which is
+# often not the one that launched the run and often has no conda env active. A bare `python`
+# failed with "command not found" per row while the header still printed, so the table came back
+# empty and looked like "no runs yet" instead of like a broken command.
+: "${PY:=}"
+if [ -z "$PY" ]; then
+  for candidate in python python3 "$HOME/anaconda3/envs/alphaapollo-dev/bin/python"; do
+    if command -v "$candidate" >/dev/null 2>&1 || [ -x "$candidate" ]; then PY="$candidate"; break; fi
+  done
+fi
+if [ -z "$PY" ]; then
+  echo "FATAL: no python found. Set PY=/path/to/python or activate the env." >&2
+  exit 1
+fi
+
 summarise() {
   printf '\n%s  [%s]\n' "════════════════════════════════" "$(date '+%F %T')"
 
@@ -32,7 +47,7 @@ summarise() {
       d="$OUT/$phase-$arm"
       m="$d/metrics.jsonl"
       [ -f "$m" ] || continue
-      python - "$m" "$d" "$phase-$arm" <<'PY'
+      "$PY" - "$m" "$d" "$phase-$arm" <<'PY'
 import json, sys, time
 from pathlib import Path
 path, run_dir, name = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]

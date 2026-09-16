@@ -874,3 +874,39 @@ def test_an_adaptation_run_still_drops_its_short_final_batch(tmp_path):
                          tracker=HarnessTracker(tmp_path, enabled=False),
                          accountant=CallAccountant(), batch_size=8, max_workers=4)
     assert summary["n_problems"] == 24
+
+
+def test_every_problems_runtime_is_released_even_when_the_problem_raises(tmp_path):
+    """The leak that killed the first full adaptation run: a fresh Agent per problem means a
+    fresh OpenAI client, and nothing upstream closes one. Cleanup lives in a `finally` inside the
+    worker thread so a failed problem returns its sockets too -- a run that dies from flaky
+    problems is exactly when descriptors matter most."""
+    closed = []
+
+    class ClosingAgent:
+        def __init__(self, idx):
+            self.idx = idx
+            self.system_prompt = ""
+            self.client = self
+
+        def close(self):
+            closed.append(self.idx)
+
+    made = {"n": 0}
+
+    def closing_runtime_factory(system_prompt):
+        made["n"] += 1
+        return {"policy_agent": ClosingAgent(made["n"])}
+
+    def dies_on_three(problem_idx, problem, runtime):
+        if problem_idx == 3:
+            raise RuntimeError("boom")
+        return {"problem_idx": problem_idx, "problem_payload": SIMPLIFIED_PAYLOAD,
+                "system_prompt_seen": ""}
+
+    run_stream(problems=problems(8), arm=BaselineArm(),
+               runtime_factory=closing_runtime_factory, run_problem_fn=dies_on_three,
+               tracker=HarnessTracker(tmp_path, enabled=False), accountant=CallAccountant(),
+               batch_size=8, max_workers=4)
+
+    assert len(closed) == 8, "all eight runtimes released, including the one that raised"

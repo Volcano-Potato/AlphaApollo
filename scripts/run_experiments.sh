@@ -36,6 +36,12 @@ if [[ -z "${OPENAI_API_KEY:-}" ]]; then
   exit 1
 fi
 
+# Belt-and-braces after the descriptor leak that killed the first full run (see
+# core/harness/runtime_cleanup.py). The leak itself is fixed -- runtimes are closed per problem --
+# but a long run holds hundreds of live sockets legitimately, and macOS ships a 256 soft limit in
+# some shells. Raising it costs nothing and removes one way for hour four to fail.
+ulimit -n 8192 2>/dev/null || true
+
 # The local SOCKS proxy refused ~25% of connections to DashScope, which surfaced as lost
 # problems rather than as an error. Direct is both correct and faster (0.38s vs 1.00s).
 export NO_PROXY="${NO_PROXY:-127.0.0.1,localhost,::1},dashscope.aliyuncs.com"

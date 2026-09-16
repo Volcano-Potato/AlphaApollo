@@ -53,6 +53,7 @@ from typing import Any, Callable
 from alphaapollo.core.harness.accounting import role_scope
 from alphaapollo.core.harness.loader import batches
 from alphaapollo.core.harness.reflect import _GT_CHANNEL, sanitize_feedback
+from alphaapollo.core.harness.runtime_cleanup import close_runtime
 
 logger = logging.getLogger(__name__)
 
@@ -480,7 +481,14 @@ def run_stream(
         # (policy, verifier, the in-problem summarizer/aggregator it constructs internally) is
         # therefore attributed to the "solver" role.
         with role_scope("solver"):
-            return run_problem_fn(problem_idx, problem, runtime)
+            try:
+                return run_problem_fn(problem_idx, problem, runtime)
+            finally:
+                # In the worker thread, in a `finally`, so a problem that raised releases its
+                # sockets too. Without this the first full adaptation run died at problem ~104
+                # of 144 with `OSError: [Errno 24] Too many open files` -- a fresh Agent per
+                # problem means a fresh OpenAI client, and nothing upstream ever closes one.
+                close_runtime(runtime)
 
     for batch_idx, batch in enumerate(batches(problems, batch_size, drop_last=drop_last_batch)):
         if batch_idx < start_batch:
