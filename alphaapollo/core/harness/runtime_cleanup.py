@@ -45,34 +45,59 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
-def _close(obj: Any, what: str) -> int:
-    """Close one object's client if it has one. Returns 1 if something was closed."""
-    if obj is None:
-        return 0
-    client = getattr(obj, "client", None)
-    close = getattr(client, "close", None)
+def _call_close(target: Any, what: str) -> int:
+    """Call ``target.close()`` if it exists. Returns 1 if it ran without raising."""
+    close = getattr(target, "close", None)
     if not callable(close):
         return 0
     try:
         close()
         return 1
     except Exception:  # noqa: BLE001 -- cleanup must never fail a finished problem
-        logger.debug("could not close the client on %s", what, exc_info=True)
+        logger.debug("could not close %s", what, exc_info=True)
         return 0
+
+
+def _close_agent(agent: Any, what: str) -> int:
+    """Close the model client an agent holds, if any."""
+    if agent is None:
+        return 0
+    return _call_close(getattr(agent, "client", None), f"the client on {what}")
 
 
 def close_runtime(runtime: dict) -> int:
-    """Close every model client reachable from one problem's runtime; return how many closed.
+    """Release everything one problem's runtime holds open; return how many things closed.
 
-    Reads the two places upstream puts an agent (``policy_agent`` at the top level,
-    ``verifier_agent`` under ``verifier_configs``) and tolerates either being absent -- the
-    Baseline arm runs with verification enabled, but a config may disable it, and the unit-test
-    runtimes carry only a stub policy agent.
+    Two kinds of resource, for two different reasons:
+
+    **Model clients** (``policy_agent``, ``verifier_agent``) -- the actual leak. Nothing upstream
+    closes these, because upstream builds two agents for a whole run while this driver builds two
+    per problem. Without this, descriptors grow without bound; see the module docstring.
+
+    **Env managers** (``policy_env_manager``, ``verifier_env_manager``) -- insurance, not a fix.
+    Each wraps an ``InformalMathEvolvingMultiProcessEnv`` holding a ThreadPoolExecutor and an
+    asyncio event loop, and upstream *does* release those: ``envs.py``'s ``__del__`` calls
+    ``close()``. Measured over an 8-minute run, live kqueue descriptors fell 8 -> 2 while
+    problems kept completing, so the collector demonstrably keeps up. But `__del__` fires on
+    refcount, which is a timing guarantee rather than a structural one, and a five-hour run is a
+    poor place to depend on one. ``close()`` guards itself with a ``_closed`` flag
+    (``envs.py:185``), so calling it here and again from ``__del__`` is harmless.
+
+    The manager's own ``close()`` is the right level to call: ``EnvironmentManagerBase.close``
+    (``base.py:114``) delegates down to the env. Reaching past it into ``.envs`` would couple this
+    module to upstream's internals for no gain.
+
+    Every step tolerates absence: a config may disable verification, and the unit-test runtimes
+    carry only a stub policy agent.
     """
     if not isinstance(runtime, dict):
         return 0
-    closed = _close(runtime.get("policy_agent"), "policy_agent")
+
+    closed = _close_agent(runtime.get("policy_agent"), "policy_agent")
+    closed += _call_close(runtime.get("policy_env_manager"), "policy_env_manager")
+
     verifier_configs = runtime.get("verifier_configs")
     if isinstance(verifier_configs, dict):
-        closed += _close(verifier_configs.get("verifier_agent"), "verifier_agent")
+        closed += _close_agent(verifier_configs.get("verifier_agent"), "verifier_agent")
+        closed += _call_close(verifier_configs.get("verifier_env_manager"), "verifier_env_manager")
     return closed

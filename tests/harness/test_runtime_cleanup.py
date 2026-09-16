@@ -85,3 +85,78 @@ def test_a_client_with_a_non_callable_close_attribute_is_skipped():
     agent = FakeAgent()
     agent.client.close = "not callable"
     assert close_runtime({"policy_agent": agent}) == 0
+
+
+# --- env managers: insurance against __del__ timing, not a demonstrated leak ------------------
+
+
+class FakeEnvManager:
+    """Upstream's manager exposes close() at its own level (base.py:114), which delegates to the
+    env. This mirrors that shape -- reaching past it into `.envs` would couple us to internals."""
+
+    def __init__(self, explode=False):
+        self.closed = 0
+        self.explode = explode
+
+    def close(self):
+        if self.explode:
+            raise RuntimeError("loop already closed")
+        self.closed += 1
+
+
+def full_runtime(**kw):
+    return {
+        "policy_agent": FakeAgent(**kw),
+        "policy_env_manager": FakeEnvManager(**kw),
+        "verifier_configs": {
+            "enabled": True,
+            "verifier_agent": FakeAgent(**kw),
+            "verifier_env_manager": FakeEnvManager(**kw),
+        },
+    }
+
+
+def test_all_four_resources_are_released():
+    rt = full_runtime()
+    assert close_runtime(rt) == 4
+    assert rt["policy_env_manager"].closed == 1
+    assert rt["verifier_configs"]["verifier_env_manager"].closed == 1
+
+
+def test_env_managers_are_released_even_without_agents():
+    rt = {"policy_env_manager": FakeEnvManager(),
+          "verifier_configs": {"verifier_env_manager": FakeEnvManager()}}
+    assert close_runtime(rt) == 2
+
+
+def test_agents_are_still_released_when_no_env_manager_is_present():
+    """The unit-test runtimes carry only a stub policy agent."""
+    assert close_runtime(runtime()) == 2
+
+
+def test_an_env_manager_without_close_is_skipped():
+    assert close_runtime({"policy_env_manager": object()}) == 0
+
+
+def test_an_env_manager_whose_close_raises_does_not_propagate():
+    """envs.py's close() shuts down a ThreadPoolExecutor and an event loop; either can already be
+    gone. Raising here would turn a completed problem into a failed one."""
+    rt = {"policy_env_manager": FakeEnvManager(explode=True)}
+    assert close_runtime(rt) == 0
+
+
+def test_one_resource_failing_does_not_stop_the_others():
+    rt = full_runtime()
+    rt["policy_env_manager"].explode = True
+    assert close_runtime(rt) == 3
+    assert rt["verifier_configs"]["verifier_env_manager"].closed == 1
+    assert rt["policy_agent"].client.closed == 1
+
+
+def test_closing_twice_is_safe():
+    """close() is called here and again from envs.py's __del__; upstream guards it with a
+    _closed flag (envs.py:185), so this must not be a problem."""
+    rt = full_runtime()
+    assert close_runtime(rt) == 4
+    assert close_runtime(rt) == 4, "idempotent from this module's side too"
+    assert rt["policy_env_manager"].closed == 2
