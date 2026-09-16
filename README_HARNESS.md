@@ -6,7 +6,7 @@
 
 > **当前状态（务必先读）**
 >
-> - Task A（skill 机制）与 Task B（context→harness 编译闭环）的代码与测试**已完成**：`tests/harness/` 共 **571 个测试全部通过**（本机实测 `571 passed in 5.22s`）。
+> - Task A（skill 机制）与 Task B（context→harness 编译闭环）的代码与测试**已完成**：`tests/harness/` 共 **619 个测试全部通过**（本机实测 `619 passed in 4.64s`）。
 > - **Task C 的三组对照实验已全部跑完**：6 个 run（3 臂 × adaptation/held-out），144 + 30 题，**丢题 0**。结果见第 8 节，产物在 `outputs/harness/`。
 > - **主结果是一个 null result，且三臂之间没有一项差异是统计显著的**（McNemar 精确检验最小 p = 0.125）。第 8.9 节按任务书要求对它做了分析，而不是把它当成失败藏起来。
 > - 尚未完成的内容集中列在第 12 节，请以该节为准。
@@ -68,12 +68,13 @@ alphaapollo/core/harness/                     # Task A/B 全部机制（不含�
 ├── arms.py            Task C 三条臂：Baseline / RawExperience / EvoHarness
 ├── accounting.py      按 role 分桶的调用与 token 计数 + seed 注入
 ├── tracker.py         wandb + jsonl 双写（wandb 永远不能让 run 失败）
+├── wandb_backfill.py  跑完之后把 analysis.py 的结果回填到原来那个 wandb run 上
 ├── export.py          导出最终 harness、演化日志与汇总数字
 └── loader.py          保留 topic/year 的 stream loader（上游 loader 会丢掉这些字段）
 
 alphaapollo/core/generation/evolving/evolving_harness_main.py   # Task B 驱动器 + CLI
 alphaapollo/data_preprocess/prepare_harness_stream.py           # AIME 数据流构建
-tests/harness/                                                  # 571 个测试
+tests/harness/                                                  # 619 个测试
 docs/design/cross-problem-skill-harness-design.md               # 设计文档（部分已过时，见 §11）
 requirements-harness.txt                                        # 两个额外依赖
 scripts/run_tests.sh
@@ -160,10 +161,10 @@ python -m pytest tests/harness/ -q
 实测输出：
 
 ```
-571 passed in 5.22s
+619 passed in 4.64s
 ```
 
-各文件测试数：`test_reflect` 59、`test_configs` 56、`test_driver` 45、`test_evolver` 43、`test_store_apply` 38、`test_arms` 38、`test_loader` 31、`test_resume` 29、`test_tracker` 27、`test_analysis` 25、`test_prepare_stream` 23、`test_accounting` 23、`test_selector` 20、`test_topic` 19、`test_runtime_cleanup` 19、`test_guard` 18、`test_store_select` 16、`test_store_persistence` 12、`test_export` 11、`test_schema` 10、`test_render` 5、`test_smoke` 4。
+各文件测试数：`test_reflect` 59、`test_configs` 56、`test_wandb_backfill` 48、`test_driver` 45、`test_evolver` 43、`test_store_apply` 38、`test_arms` 38、`test_loader` 31、`test_resume` 29、`test_tracker` 27、`test_analysis` 25、`test_prepare_stream` 23、`test_accounting` 23、`test_selector` 20、`test_topic` 19、`test_runtime_cleanup` 19、`test_guard` 18、`test_store_select` 16、`test_store_persistence` 12、`test_export` 11、`test_schema` 10、`test_render` 5、`test_smoke` 4。
 
 单元测试**不触碰网络栈**：`Agent.__init__` 会真的构造 `openai.OpenAI(...)`，测试里用 monkeypatch 换掉 agent 模块内的 `OpenAI` 名字（见 commit `5580627`）。这是因为曾经出现过"同一套测试在 A 机 97 passed、在 B 机 84 passed + 13 errors"，差别纯粹来自 shell 里有没有 SOCKS 代理变量。
 
@@ -551,7 +552,7 @@ ls outputs/harness/adapt-evo/store/skills/       # 目前编译出了哪些技�
 tail -3 outputs/harness/adapt-evo/store/harness_log.jsonl   # 最近几个 curator 决策
 ```
 
-wandb 上同时有实时曲线（`alphaapollo-evo-harness` project，按 `adapt` / `heldout` 分组），但**只有原始序列** —— 七项报告结果不在上面，见 §7.6 末尾那张对照表。
+wandb 上同时有实时曲线（`alphaapollo-evo-harness` project，按 `adapt` / `heldout` 分组），但跑的过程中**只有原始序列** —— 七项报告结果要跑完之后用 `wandb_backfill.py` 回填上去，见 §7.6 末尾那张对照表。
 
 ### 7.5 配置文件
 
@@ -633,20 +634,55 @@ python -m alphaapollo.core.harness.analysis --root ./outputs/harness --out_dir .
 
 **这条界限要说清楚，否则很容易把 dashboard 当成结果。**
 
-| | wandb（实时） | `analysis.py`（跑完之后）|
-|---|---|---|
-| 逐题 `pass1_round0` / `pass_final` / `error` | ✅ 原始序列 | ✅ |
-| 每批 `harness/n_general`、`total_tokens`、`mean_skill_tokens` | ✅ 增长曲线 | ✅ |
-| 每批 `calls/*`、`tokens/*` 分角色 | ✅ | ✅ |
-| **按区间的 success rate 曲线** | ❌ | ✅ |
-| **per-topic 通过率** | ❌ | ✅ |
-| **三臂在交集上的比较** | ❌ | ✅ |
-| **skill 使用频次** | ❌ | ✅ |
-| **迁移案例候选** | ❌ | ✅ |
+| | wandb 实时（`tracker.py`）| wandb 回填（`wandb_backfill.py`）| `analysis.py` |
+|---|---|---|---|
+| 逐题 `pass1_round0` / `pass_final` / `error` | ✅ 原始序列 | — | ✅ |
+| 每批 `harness/n_general`、`total_tokens`、`mean_skill_tokens` | ✅ 增长曲线 | — | ✅ |
+| 每批 `calls/*`、`tokens/*` 分角色 | ✅ | — | ✅ |
+| **累积 / 滚动 success rate 曲线** | ❌ | ✅ history | ✅ |
+| **按区间的 success rate** | ❌ | ✅ table | ✅ |
+| **per-topic 通过率** | ❌ | ✅ summary + table | ✅ |
+| **三臂在交集上的比较** | ❌ | ✅ summary（`analysis/common/*`）| ✅ |
+| **skill 使用频次** | ❌ | ✅ table | ✅ |
+| **迁移案例候选** | ❌ | ✅ table | ✅ |
 
-wandb 拿到的是**原始序列**，七项报告结果**一项都不在里面** —— 它们要么是跨 run 的（交集比较），要么是需要分组聚合的（窗口曲线、per-topic），wandb 的逐 step 模型表达不了。
+**实时那一列拿到的只是原始序列** —— 七项报告结果一项都不在里面。它们要么是跨 run 的（交集比较），要么是需要分组聚合的（窗口曲线、per-topic），wandb 的逐 step 模型在**跑的过程中**表达不了。
 
-用途因此是分工的：**wandb 用来盯 run 还活着**（曲线在动、`calls/unscoped` 没有变成非零、harness 在长），**`analysis.py` 用来出结果**。每一张 wandb 图都能仅凭 `metrics.jsonl` 离线重画 —— jsonl 才是可复现的产物。
+跑完之后可以：
+
+```bash
+python -m alphaapollo.core.harness.wandb_backfill --root ./outputs/harness --dry_run  # 先看要推什么
+python -m alphaapollo.core.harness.wandb_backfill --root ./outputs/harness           # 推
+```
+
+它按 `<run_dir>/wandb_run_id.txt` 里的 id `resume` 原来那个 run，把 `analysis.py` 算出的量挂上去，**不重跑任何东西**（只读 `metrics.jsonl` 与 `selection_log.jsonl`）。每个数字都直接调 `analysis.py` 的函数得到，不另算一遍 —— dashboard 与 `results.md` 对不上会比 dashboard 是空的更糟。
+
+三条 wandb 的硬约束决定了它的形状：
+
+- **派生曲线不能复用原来的 step。** wandb 的 history step 单调递增，续上的 run 从上一个 step 往后走，写到更早的 step 会被静默丢弃。所以逐题曲线用自定义 x 轴（`analysis/problem_idx`，经 `define_metric` 声明），全局 `_step` 随它去 —— 对这些曲线来说 `_step` 轴本来就没有意义。
+- **因此 history 推一次就不能再推**（只能追加，再推一次会在同样的 x 上叠第二组点，而 wandb 没有删除第一组的办法）。挡住它的是**两个**文件，因为它们回答两个不同的问题，合成一个就会让 `--force` 同时绕过两者：
+  - `<run_dir>/wandb_backfill.json` 记录**已经发过什么**，其中 `series_sent` 是粘性的 —— 在第一行 history 发出去**之前**翻转，之后（包括只推 summary 的修复）永不回退。已经发过 history 的 run **无条件**拒绝再发，`--force` 也不行：再多的"我确定"也不能让重复的曲线变成对的。
+  - 并发由 harness 自己的 pid 锁（`resume.acquire_run_lock`）管，每次推送都取，**永远不可绕过**。顺带保证了回填不会和一个还在往 `metrics.jsonl` 追加的 run 撞上。
+
+  `--force` 只管前一个文件，意思是"是的，我要重做我做过的事"。两个文件都放在 run 目录里，语义和 run id 一致：删掉目录就是"这次实验没了"。
+- **它永远不是事实来源。** `metrics.jsonl` + `analysis.py` 才是可复现的产物，这里只是单向复制到 dashboard 上。`--dry_run` 把完整 payload 写到 `<run_dir>/wandb_backfill_preview.json`，一个网络请求都不发。
+
+已经推过的 run 要改数字，唯一的路径是只推按 key 覆盖的 summary 和 Table：
+
+```bash
+python -m alphaapollo.core.harness.wandb_backfill --root ./outputs/harness \
+  --phases heldout --only heldout-evo,heldout-raw --skip_series --force
+```
+
+`--only` 只限制**推哪几个 run**，跨臂的量仍按整个 phase 计算 —— 否则修一个 run 会顺手改掉它 `analysis/common/*` 的含义。
+
+**上传前先做 preflight**：请求的每个 phase 都要凑齐 baseline/raw/evo，每个目录都要有非空 metrics、有 wandb run id、project 可解析。任何一条不满足就在**发第一个请求之前**整体拒绝并以非零码退出 —— 这里要防的不是崩溃，而是"推了六个里的五个然后愉快地报成功"：单看一个 run，缺目录/空 metrics/没有 run id 都长得像"没事可做"，五个成功旁边的一次静默跳过是看不见的。中途实验或 jsonl-only 的 run 用 `--allow_missing` 显式放行；`--dry_run` 只警告不拒绝（什么都没上传，也就没什么可搞坏的）。
+
+退出码：只要有 run 尝试上传并失败，或 preflight 不通过，就非零。"已经推过"这种主动跳过不算失败 —— 把两者混为一谈，会让六个 run 全部认证失败的一次运行在 shell 看来是成功的。
+
+> **一个已经踩到的坑：held-out 的 selection log 混着 adaptation 的行。** `run_experiments.sh` 给 frozen run 的状态是**整目录复制**adaptation 臂的，`selection_log.jsonl` 也在里面；held-out 跑起来之后往同一个文件追加自己的 30 行，而两个 phase 的题号都从 0 开始，所以这 30 行是**压在** adaptation 的 0–29 上、而不是接在 144 行后面。整份读进来就等于拿 adaptation 的数据回答关于 held-out 的问题（实测：174 道"题"而不是 30，平均注入 189 token 而不是 209，held-out evo 的 skill 数 15 而不是 13）。`analysis.load_selections` 用两条规则修正：**后写覆盖先写**（撞号时解析到最后追加的那个 phase，也就是正在报告的这个），加上 **`only`** 限定到本 run 真正有 metrics 的题号集合。`only` 传的是**全部**题目而非 `completed` —— 一道跑挂的题照样选过技能、照样花了 token，按 `completed` 过滤会把这部分开销悄悄抹掉。`results.md` 不受影响（§5/§6 只覆盖 adapt 臂），逐字节比对已确认。
+
+分工因此是：**实时 wandb 用来盯 run 还活着**（曲线在动、`calls/unscoped` 没有变成非零、harness 在长），**`analysis.py` 用来出结果**，**回填让 dashboard 事后也能读**。每一张 wandb 图都能仅凭 `metrics.jsonl` 离线重画。
 
 两个实现细节：
 
@@ -689,7 +725,7 @@ wandb 是**可选**的（任务书从未要求）：六个 run（3 臂 × adapta
 | 题量 | adaptation 144（stream 149 题，尾部 5 题因 `loader.batches(drop_last=True)` 被**三臂同等**丢弃）；held-out 30（AIME 2025 全年） |
 | **丢题** | **0 / 0 / 0**。对照 §9 烟囱测试的 25% 丢题率 —— `NO_PROXY` 那条修复是有效的 |
 | `calls/unscoped` | 6 个 run 全为 **0**，solver/管理开销拆分可信 |
-| 测试 | `571 passed in 5.22s` |
+| 测试 | `619 passed in 4.64s` |
 | resume | 三个 adaptation run 各 18 批、held-out 各 4 批，`progress.json` 的 fingerprint 一致 |
 
 held-out 的 evo 臂管理调用**只有 `selector`、没有 `reflect`/`curator`**（§8.6 表），这是"最终 harness 确实被冻结"的直接证据，而不是靠配置声明。
@@ -794,7 +830,7 @@ evo 的 321 次管理调用：`selector` 136、`reflect` 109、`topic_curator` 5
 2. **预算上限是 800 token，evo 实际只用到 185（23%）；Raw 注入量是它的 2.1 倍，held-out 上还赢了。** 所以 evo 的劣势不能归因于"注入得不够多"。
 3. **两臂在 adaptation 上各有 8 题零注入，正好是 batch 0 的 p_0–p_7**（harness 当时为空）。这是"一道题不可能被自己产生的 skill 影响"（§5.2）在数据上的直接证据。
 
-> **一个产物口径上的坑**：held-out 的 `selection_log.jsonl` 有 **174 行不是 30 行** —— `run_experiments.sh` 把 adaptation 的 store 整个拷过去，那 144 行选择记录跟着带了过来，held-out 只是往后追加。上表取的是 `[-30:]`。直接对该文件求和会把 adaptation 的开销算进 held-out。
+> **一个产物口径上的坑**：held-out 的 `selection_log.jsonl` 有 **174 行不是 30 行** —— `run_experiments.sh` 把 adaptation 的 store 整个拷过去，那 144 行选择记录跟着带了过来，held-out 只是往后追加。直接对该文件求和会把 adaptation 的开销算进 held-out。读取一律走 `analysis.load_selections(store_root, only)`：**按 `problem_idx` 后写覆盖 + 限定到本 run 的题号集合**。上表最初是用 `[-30:]` 取的，在这份数据上结果相同（held-out 的 30 行确实是最后追加的），但那个口径依赖"追加顺序恰好如此"，换个中断/续跑的 run 就不成立了 —— 已统一到前者，§7.6 有完整说明。
 
 ### 8.7 skill 使用频次
 
@@ -1103,7 +1139,7 @@ WARNING: reflect failed for problem 8; skipping candidate
 
 | 数字 | 来源 |
 |---|---|
-| 571 tests / 5.22s | 本机 `python -m pytest tests/ -q` |
+| 619 tests / 4.64s | 本机 `python -m pytest tests/ -q` |
 | Task C 全部结果表（§8） | `outputs/harness/report/results.{md,json}`（由 `analysis.py` 生成）、`outputs/harness/export-evo/{harness.md,summary.json,evolution.jsonl}`、各 run 的 `metrics.jsonl` 与 `selection_log.jsonl` |
 | McNemar 精确检验 p 值 | 对各 run `metrics.jsonl` 的 `adapt/pass_final` 做逐题配对计算 |
 | 迁移案例的轨迹级细节 | `outputs/harness/{adapt-baseline,adapt-evo}/trajectories/problem_{0084,0105,0068}.json`，分析见 `docs/findings/transfer-cases.md` |
