@@ -1,0 +1,10 @@
+{
+  "completed_batches": 18,
+  "fingerprint": {
+    "stream_path": "./data/harness/adaptation.parquet",
+    "arm": "evo",
+    "batch_size": 8,
+    "seed": 1234,
+    "frozen": false
+  }
+}

@@ -143,3 +143,14 @@ hf_ckpts
 results/
 
 AIME_24_3_models_GLM
+# Task C evidence bundle: the artifacts every number in README_HARNESS.md §8 cites.
+# `**/outputs` above excludes run output wholesale; these lines re-include only the small
+# auditable products -- summary metrics, the exported harness with its full edit log, and the
+# selection logs (~600KB). The trajectory corpus (~43MB) and wandb dirs stay out; the six
+# trajectories that docs/findings/transfer-cases.md analyses line by line are force-added.
+!outputs/
+outputs/*
+!outputs/harness/
+outputs/harness/*/trajectories/
+outputs/harness/*/wandb/
+outputs/harness/*/wandb_run_id.txt

@@ -1,0 +1,144 @@
+{"ts": "2026-09-16T04:25:39.520970+00:00", "problem_idx": 0, "topic": "number_theory", "skill_ids": [], "n_tokens": 0, "success": false}
+{"ts": "2026-09-16T04:25:39.524388+00:00", "problem_idx": 1, "topic": "number_theory", "skill_ids": [], "n_tokens": 0, "success": true}
+{"ts": "2026-09-16T04:25:39.526746+00:00", "problem_idx": 2, "topic": "combinatorics", "skill_ids": [], "n_tokens": 0, "success": false}
+{"ts": "2026-09-16T04:25:39.529736+00:00", "problem_idx": 3, "topic": "geometry", "skill_ids": [], "n_tokens": 0, "success": false}
+{"ts": "2026-09-16T04:25:39.532314+00:00", "problem_idx": 4, "topic": "algebra", "skill_ids": [], "n_tokens": 0, "success": true}
+{"ts": "2026-09-16T04:25:39.534203+00:00", "problem_idx": 5, "topic": "algebra", "skill_ids": [], "n_tokens": 0, "success": false}
+{"ts": "2026-09-16T04:25:39.535940+00:00", "problem_idx": 6, "topic": "geometry", "skill_ids": [], "n_tokens": 0, "success": false}
+{"ts": "2026-09-16T04:25:39.537327+00:00", "problem_idx": 7, "topic": "geometry", "skill_ids": [], "n_tokens": 0, "success": false}
+{"ts": "2026-09-16T04:31:30.009831+00:00", "problem_idx": 8, "topic": "combinatorics", "skill_ids": ["sk_0006", "sk_0002"], "n_tokens": 135, "success": false}
+{"ts": "2026-09-16T04:31:30.013549+00:00", "problem_idx": 9, "topic": "combinatorics", "skill_ids": ["sk_0002", "sk_0006"], "n_tokens": 135, "success": false}
+{"ts": "2026-09-16T04:31:30.016265+00:00", "problem_idx": 10, "topic": "number_theory", "skill_ids": ["sk_0001", "sk_0006"], "n_tokens": 135, "success": true}
+{"ts": "2026-09-16T04:31:30.019219+00:00", "problem_idx": 11, "topic": "combinatorics", "skill_ids": ["sk_0006"], "n_tokens": 72, "success": true}
+{"ts": "2026-09-16T04:31:30.022840+00:00", "problem_idx": 12, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006"], "n_tokens": 132, "success": false}
+{"ts": "2026-09-16T04:31:30.025088+00:00", "problem_idx": 13, "topic": "combinatorics", "skill_ids": ["sk_0002", "sk_0006"], "n_tokens": 135, "success": false}
+{"ts": "2026-09-16T04:31:30.027356+00:00", "problem_idx": 14, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006"], "n_tokens": 132, "success": false}
+{"ts": "2026-09-16T04:31:30.029303+00:00", "problem_idx": 15, "topic": "algebra", "skill_ids": ["sk_0003", "sk_0006"], "n_tokens": 132, "success": true}
+{"ts": "2026-09-16T04:38:00.850858+00:00", "problem_idx": 16, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0008"], "n_tokens": 135, "success": false}
+{"ts": "2026-09-16T04:38:00.855233+00:00", "problem_idx": 17, "topic": "number_theory", "skill_ids": ["sk_0008", "sk_0006", "sk_0007"], "n_tokens": 194, "success": false}
+{"ts": "2026-09-16T04:38:00.859222+00:00", "problem_idx": 18, "topic": "geometry", "skill_ids": ["sk_0005", "sk_0003", "sk_0008"], "n_tokens": 214, "success": false}
+{"ts": "2026-09-16T04:38:00.865572+00:00", "problem_idx": 19, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008"], "n_tokens": 135, "success": true}
+{"ts": "2026-09-16T04:38:00.868977+00:00", "problem_idx": 20, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0008"], "n_tokens": 198, "success": true}
+{"ts": "2026-09-16T04:38:00.871981+00:00", "problem_idx": 21, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008"], "n_tokens": 204, "success": false}
+{"ts": "2026-09-16T04:38:00.874219+00:00", "problem_idx": 22, "topic": "combinatorics", "skill_ids": ["sk_0002", "sk_0007", "sk_0006"], "n_tokens": 194, "success": false}
+{"ts": "2026-09-16T04:38:00.878121+00:00", "problem_idx": 23, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008"], "n_tokens": 204, "success": false}
+{"ts": "2026-09-16T04:43:39.071821+00:00", "problem_idx": 24, "topic": "combinatorics", "skill_ids": ["sk_0006", "sk_0007", "sk_0008"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T04:43:39.075161+00:00", "problem_idx": 25, "topic": "combinatorics", "skill_ids": ["sk_0006", "sk_0007", "sk_0008"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T04:43:39.079251+00:00", "problem_idx": 26, "topic": "geometry", "skill_ids": ["sk_0008", "sk_0010", "sk_0003"], "n_tokens": 184, "success": false}
+{"ts": "2026-09-16T04:43:39.082958+00:00", "problem_idx": 27, "topic": "combinatorics", "skill_ids": ["sk_0006", "sk_0007", "sk_0008"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T04:43:39.085540+00:00", "problem_idx": 28, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0008", "sk_0010"], "n_tokens": 184, "success": false}
+{"ts": "2026-09-16T04:43:39.088011+00:00", "problem_idx": 29, "topic": "combinatorics", "skill_ids": ["sk_0002", "sk_0006", "sk_0007", "sk_0008", "sk_0010"], "n_tokens": 293, "success": false}
+{"ts": "2026-09-16T04:43:39.090122+00:00", "problem_idx": 30, "topic": "number_theory", "skill_ids": ["sk_0008", "sk_0006", "sk_0007"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T04:43:39.092255+00:00", "problem_idx": 31, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0007", "sk_0008"], "n_tokens": 171, "success": true}
+{"ts": "2026-09-16T04:59:41.086322+00:00", "problem_idx": 32, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008"], "n_tokens": 178, "success": true}
+{"ts": "2026-09-16T04:59:41.091848+00:00", "problem_idx": 33, "topic": "combinatorics", "skill_ids": ["sk_0011", "sk_0007", "sk_0006"], "n_tokens": 182, "success": false}
+{"ts": "2026-09-16T04:59:41.097008+00:00", "problem_idx": 34, "topic": "combinatorics", "skill_ids": ["sk_0012", "sk_0007", "sk_0011", "sk_0006"], "n_tokens": 238, "success": false}
+{"ts": "2026-09-16T04:59:41.100489+00:00", "problem_idx": 35, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0010"], "n_tokens": 168, "success": false}
+{"ts": "2026-09-16T04:59:41.103216+00:00", "problem_idx": 36, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0010"], "n_tokens": 168, "success": true}
+{"ts": "2026-09-16T04:59:41.105496+00:00", "problem_idx": 37, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0008"], "n_tokens": 172, "success": true}
+{"ts": "2026-09-16T04:59:41.107908+00:00", "problem_idx": 38, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0007", "sk_0012"], "n_tokens": 176, "success": false}
+{"ts": "2026-09-16T04:59:41.110070+00:00", "problem_idx": 39, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0008"], "n_tokens": 172, "success": true}
+{"ts": "2026-09-16T05:06:01.630945+00:00", "problem_idx": 40, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008", "sk_0012"], "n_tokens": 255, "success": false}
+{"ts": "2026-09-16T05:06:01.637563+00:00", "problem_idx": 41, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0010"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T05:06:01.641081+00:00", "problem_idx": 42, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0010"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T05:06:01.643618+00:00", "problem_idx": 43, "topic": "number_theory", "skill_ids": ["sk_0001", "sk_0008"], "n_tokens": 123, "success": true}
+{"ts": "2026-09-16T05:06:01.646261+00:00", "problem_idx": 44, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0010"], "n_tokens": 171, "success": false}
+{"ts": "2026-09-16T05:06:01.648307+00:00", "problem_idx": 45, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008"], "n_tokens": 184, "success": false}
+{"ts": "2026-09-16T05:06:01.650286+00:00", "problem_idx": 46, "topic": "combinatorics", "skill_ids": ["sk_0011", "sk_0002", "sk_0007"], "n_tokens": 191, "success": true}
+{"ts": "2026-09-16T05:06:01.652297+00:00", "problem_idx": 47, "topic": "combinatorics", "skill_ids": ["sk_0012", "sk_0006", "sk_0007", "sk_0009"], "n_tokens": 262, "success": true}
+{"ts": "2026-09-16T05:12:26.408154+00:00", "problem_idx": 48, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0012", "sk_0006"], "n_tokens": 198, "success": false}
+{"ts": "2026-09-16T05:12:26.412762+00:00", "problem_idx": 49, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0011", "sk_0006", "sk_0002"], "n_tokens": 254, "success": false}
+{"ts": "2026-09-16T05:12:26.416491+00:00", "problem_idx": 50, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0012"], "n_tokens": 193, "success": true}
+{"ts": "2026-09-16T05:12:26.420316+00:00", "problem_idx": 51, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0012"], "n_tokens": 193, "success": false}
+{"ts": "2026-09-16T05:12:26.423596+00:00", "problem_idx": 52, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0008"], "n_tokens": 185, "success": false}
+{"ts": "2026-09-16T05:12:26.427687+00:00", "problem_idx": 53, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0006", "sk_0007", "sk_0008"], "n_tokens": 258, "success": false}
+{"ts": "2026-09-16T05:12:26.429987+00:00", "problem_idx": 54, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0012"], "n_tokens": 193, "success": false}
+{"ts": "2026-09-16T05:12:26.432747+00:00", "problem_idx": 55, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008"], "n_tokens": 191, "success": false}
+{"ts": "2026-09-16T05:17:35.286676+00:00", "problem_idx": 56, "topic": "combinatorics", "skill_ids": ["sk_0012", "sk_0007", "sk_0006", "sk_0013"], "n_tokens": 267, "success": false}
+{"ts": "2026-09-16T05:17:35.290384+00:00", "problem_idx": 57, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T05:17:35.293334+00:00", "problem_idx": 58, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0013", "sk_0008"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T05:17:35.296397+00:00", "problem_idx": 59, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T05:17:35.299820+00:00", "problem_idx": 60, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T05:17:35.302364+00:00", "problem_idx": 61, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 187, "success": true}
+{"ts": "2026-09-16T05:17:35.304582+00:00", "problem_idx": 62, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0013", "sk_0008"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T05:17:35.306765+00:00", "problem_idx": 63, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0006", "sk_0007", "sk_0013"], "n_tokens": 267, "success": false}
+{"ts": "2026-09-16T05:26:57.526199+00:00", "problem_idx": 64, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0014", "sk_0006"], "n_tokens": 182, "success": true}
+{"ts": "2026-09-16T05:26:57.529926+00:00", "problem_idx": 65, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0013", "sk_0008"], "n_tokens": 197, "success": false}
+{"ts": "2026-09-16T05:26:57.532892+00:00", "problem_idx": 66, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0013", "sk_0006"], "n_tokens": 193, "success": false}
+{"ts": "2026-09-16T05:26:57.535435+00:00", "problem_idx": 67, "topic": "geometry", "skill_ids": ["sk_0008", "sk_0006", "sk_0014"], "n_tokens": 186, "success": true}
+{"ts": "2026-09-16T05:26:57.539255+00:00", "problem_idx": 68, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0007", "sk_0006", "sk_0013", "sk_0014"], "n_tokens": 311, "success": false}
+{"ts": "2026-09-16T05:26:57.542775+00:00", "problem_idx": 69, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0006", "sk_0009", "sk_0013", "sk_0008"], "n_tokens": 311, "success": false}
+{"ts": "2026-09-16T05:26:57.545360+00:00", "problem_idx": 70, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0007", "sk_0013"], "n_tokens": 256, "success": false}
+{"ts": "2026-09-16T05:26:57.548884+00:00", "problem_idx": 71, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0012", "sk_0008", "sk_0013"], "n_tokens": 257, "success": false}
+{"ts": "2026-09-16T05:33:08.784595+00:00", "problem_idx": 72, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0008", "sk_0014"], "n_tokens": 196, "success": false}
+{"ts": "2026-09-16T05:33:08.788447+00:00", "problem_idx": 73, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0008"], "n_tokens": 191, "success": false}
+{"ts": "2026-09-16T05:33:08.791562+00:00", "problem_idx": 74, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 183, "success": false}
+{"ts": "2026-09-16T05:33:08.795237+00:00", "problem_idx": 75, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0006", "sk_0001"], "n_tokens": 184, "success": true}
+{"ts": "2026-09-16T05:33:08.799063+00:00", "problem_idx": 76, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0011", "sk_0003"], "n_tokens": 188, "success": true}
+{"ts": "2026-09-16T05:33:08.801808+00:00", "problem_idx": 77, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 183, "success": true}
+{"ts": "2026-09-16T05:33:08.805241+00:00", "problem_idx": 78, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0008", "sk_0014"], "n_tokens": 196, "success": true}
+{"ts": "2026-09-16T05:33:08.808828+00:00", "problem_idx": 79, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0007", "sk_0008", "sk_0014"], "n_tokens": 251, "success": false}
+{"ts": "2026-09-16T05:37:31.104933+00:00", "problem_idx": 80, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 180, "success": false}
+{"ts": "2026-09-16T05:37:31.110335+00:00", "problem_idx": 81, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0008", "sk_0011"], "n_tokens": 258, "success": false}
+{"ts": "2026-09-16T05:37:31.113540+00:00", "problem_idx": 82, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0007", "sk_0008", "sk_0013", "sk_0014"], "n_tokens": 303, "success": false}
+{"ts": "2026-09-16T05:37:31.116662+00:00", "problem_idx": 83, "topic": "combinatorics", "skill_ids": ["sk_0002", "sk_0007", "sk_0014"], "n_tokens": 186, "success": true}
+{"ts": "2026-09-16T05:37:31.119958+00:00", "problem_idx": 84, "topic": "number_theory", "skill_ids": ["sk_0001", "sk_0006", "sk_0008"], "n_tokens": 188, "success": true}
+{"ts": "2026-09-16T05:37:31.123147+00:00", "problem_idx": 85, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0009", "sk_0013", "sk_0008"], "n_tokens": 234, "success": false}
+{"ts": "2026-09-16T05:37:31.125967+00:00", "problem_idx": 86, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0008", "sk_0013", "sk_0001", "sk_0014"], "n_tokens": 301, "success": false}
+{"ts": "2026-09-16T05:37:31.128017+00:00", "problem_idx": 87, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0009", "sk_0013", "sk_0003"], "n_tokens": 234, "success": false}
+{"ts": "2026-09-16T05:48:32.156799+00:00", "problem_idx": 88, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0007", "sk_0014"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T05:48:32.162122+00:00", "problem_idx": 89, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0014"], "n_tokens": 169, "success": false}
+{"ts": "2026-09-16T05:48:32.165664+00:00", "problem_idx": 90, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0006", "sk_0012"], "n_tokens": 181, "success": false}
+{"ts": "2026-09-16T05:48:32.169566+00:00", "problem_idx": 91, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0014"], "n_tokens": 169, "success": true}
+{"ts": "2026-09-16T05:48:32.172784+00:00", "problem_idx": 92, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0007", "sk_0006"], "n_tokens": 181, "success": false}
+{"ts": "2026-09-16T05:48:32.175185+00:00", "problem_idx": 93, "topic": "combinatorics", "skill_ids": ["sk_0012", "sk_0007", "sk_0006"], "n_tokens": 181, "success": false}
+{"ts": "2026-09-16T05:48:32.177777+00:00", "problem_idx": 94, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0012"], "n_tokens": 179, "success": true}
+{"ts": "2026-09-16T05:48:32.180282+00:00", "problem_idx": 95, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0006", "sk_0014"], "n_tokens": 169, "success": false}
+{"ts": "2026-09-16T05:54:17.717989+00:00", "problem_idx": 96, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0007", "sk_0012"], "n_tokens": 181, "success": false}
+{"ts": "2026-09-16T05:54:17.722395+00:00", "problem_idx": 97, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0007", "sk_0008", "sk_0012", "sk_0013"], "n_tokens": 295, "success": true}
+{"ts": "2026-09-16T05:54:17.725734+00:00", "problem_idx": 98, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0011", "sk_0003"], "n_tokens": 184, "success": false}
+{"ts": "2026-09-16T05:54:17.728717+00:00", "problem_idx": 99, "topic": "number_theory", "skill_ids": ["sk_0014", "sk_0006", "sk_0008"], "n_tokens": 173, "success": false}
+{"ts": "2026-09-16T05:54:17.731778+00:00", "problem_idx": 100, "topic": "geometry", "skill_ids": ["sk_0011", "sk_0006", "sk_0008"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T05:54:17.733911+00:00", "problem_idx": 101, "topic": "combinatorics", "skill_ids": ["sk_0014", "sk_0007", "sk_0006"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T05:54:17.737119+00:00", "problem_idx": 102, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0011", "sk_0008"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T05:54:17.740417+00:00", "problem_idx": 103, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0008", "sk_0012", "sk_0013"], "n_tokens": 230, "success": false}
+{"ts": "2026-09-16T06:00:10.245752+00:00", "problem_idx": 104, "topic": "geometry", "skill_ids": ["sk_0006", "sk_0015", "sk_0001", "sk_0008", "sk_0011", "sk_0009"], "n_tokens": 367, "success": false}
+{"ts": "2026-09-16T06:00:10.249368+00:00", "problem_idx": 105, "topic": "number_theory", "skill_ids": ["sk_0014", "sk_0007", "sk_0013"], "n_tokens": 178, "success": false}
+{"ts": "2026-09-16T06:00:10.252454+00:00", "problem_idx": 106, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0008"], "n_tokens": 186, "success": false}
+{"ts": "2026-09-16T06:00:10.254896+00:00", "problem_idx": 107, "topic": "combinatorics", "skill_ids": ["sk_0014", "sk_0007", "sk_0012", "sk_0006"], "n_tokens": 221, "success": false}
+{"ts": "2026-09-16T06:00:10.257765+00:00", "problem_idx": 108, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0008", "sk_0013"], "n_tokens": 233, "success": true}
+{"ts": "2026-09-16T06:00:10.261518+00:00", "problem_idx": 109, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0008"], "n_tokens": 186, "success": true}
+{"ts": "2026-09-16T06:00:10.264550+00:00", "problem_idx": 110, "topic": "combinatorics", "skill_ids": ["sk_0012", "sk_0007", "sk_0006"], "n_tokens": 163, "success": false}
+{"ts": "2026-09-16T06:00:10.266987+00:00", "problem_idx": 111, "topic": "algebra", "skill_ids": ["sk_0001", "sk_0006", "sk_0009"], "n_tokens": 173, "success": false}
+{"ts": "2026-09-16T06:06:51.560032+00:00", "problem_idx": 112, "topic": "combinatorics", "skill_ids": ["sk_0002", "sk_0014", "sk_0007"], "n_tokens": 186, "success": false}
+{"ts": "2026-09-16T06:06:51.565249+00:00", "problem_idx": 113, "topic": "number_theory", "skill_ids": ["sk_0012", "sk_0006", "sk_0007", "sk_0013"], "n_tokens": 218, "success": false}
+{"ts": "2026-09-16T06:06:51.569830+00:00", "problem_idx": 114, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0015", "sk_0006"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T06:06:51.576456+00:00", "problem_idx": 115, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0008", "sk_0012", "sk_0014"], "n_tokens": 215, "success": false}
+{"ts": "2026-09-16T06:06:51.580883+00:00", "problem_idx": 116, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0003"], "n_tokens": 187, "success": false}
+{"ts": "2026-09-16T06:06:51.583625+00:00", "problem_idx": 117, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0013", "sk_0001"], "n_tokens": 174, "success": false}
+{"ts": "2026-09-16T06:06:51.586375+00:00", "problem_idx": 118, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0008"], "n_tokens": 182, "success": false}
+{"ts": "2026-09-16T06:06:51.589914+00:00", "problem_idx": 119, "topic": "algebra", "skill_ids": ["sk_0008", "sk_0014", "sk_0006"], "n_tokens": 173, "success": false}
+{"ts": "2026-09-16T06:13:25.557237+00:00", "problem_idx": 120, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0008", "sk_0013"], "n_tokens": 170, "success": true}
+{"ts": "2026-09-16T06:13:25.560573+00:00", "problem_idx": 121, "topic": "number_theory", "skill_ids": ["sk_0014", "sk_0006", "sk_0008"], "n_tokens": 177, "success": true}
+{"ts": "2026-09-16T06:13:25.563222+00:00", "problem_idx": 122, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0003"], "n_tokens": 183, "success": false}
+{"ts": "2026-09-16T06:13:25.566051+00:00", "problem_idx": 123, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0008", "sk_0012", "sk_0013"], "n_tokens": 237, "success": false}
+{"ts": "2026-09-16T06:13:25.567876+00:00", "problem_idx": 124, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0015", "sk_0003"], "n_tokens": 183, "success": false}
+{"ts": "2026-09-16T06:13:25.569991+00:00", "problem_idx": 125, "topic": "combinatorics", "skill_ids": ["sk_0006", "sk_0007", "sk_0014"], "n_tokens": 183, "success": false}
+{"ts": "2026-09-16T06:13:25.572042+00:00", "problem_idx": 126, "topic": "number_theory", "skill_ids": ["sk_0006", "sk_0007", "sk_0012", "sk_0014"], "n_tokens": 250, "success": false}
+{"ts": "2026-09-16T06:13:25.573882+00:00", "problem_idx": 127, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0001"], "n_tokens": 182, "success": false}
+{"ts": "2026-09-16T06:18:50.786969+00:00", "problem_idx": 128, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0014", "sk_0011", "sk_0006", "sk_0010"], "n_tokens": 288, "success": false}
+{"ts": "2026-09-16T06:18:50.790861+00:00", "problem_idx": 129, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0003"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T06:18:50.795219+00:00", "problem_idx": 130, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0001"], "n_tokens": 178, "success": false}
+{"ts": "2026-09-16T06:18:50.798438+00:00", "problem_idx": 131, "topic": "combinatorics", "skill_ids": ["sk_0011", "sk_0007", "sk_0006"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T06:18:50.802069+00:00", "problem_idx": 132, "topic": "number_theory", "skill_ids": ["sk_0007", "sk_0012", "sk_0006", "sk_0011", "sk_0014"], "n_tokens": 308, "success": false}
+{"ts": "2026-09-16T06:18:50.805674+00:00", "problem_idx": 133, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0006", "sk_0008", "sk_0009", "sk_0013"], "n_tokens": 283, "success": false}
+{"ts": "2026-09-16T06:18:50.808890+00:00", "problem_idx": 134, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0009", "sk_0010", "sk_0008"], "n_tokens": 216, "success": false}
+{"ts": "2026-09-16T06:18:50.811582+00:00", "problem_idx": 135, "topic": "algebra", "skill_ids": ["sk_0006", "sk_0012", "sk_0009"], "n_tokens": 177, "success": true}
+{"ts": "2026-09-16T06:23:59.041553+00:00", "problem_idx": 136, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0016", "sk_0010"], "n_tokens": 166, "success": false}
+{"ts": "2026-09-16T06:23:59.045288+00:00", "problem_idx": 137, "topic": "geometry", "skill_ids": ["sk_0003", "sk_0015", "sk_0009"], "n_tokens": 174, "success": true}
+{"ts": "2026-09-16T06:23:59.049944+00:00", "problem_idx": 138, "topic": "algebra", "skill_ids": ["sk_0009", "sk_0008", "sk_0013"], "n_tokens": 158, "success": false}
+{"ts": "2026-09-16T06:23:59.052532+00:00", "problem_idx": 139, "topic": "combinatorics", "skill_ids": ["sk_0007", "sk_0011", "sk_0014"], "n_tokens": 179, "success": false}
+{"ts": "2026-09-16T06:23:59.054339+00:00", "problem_idx": 140, "topic": "algebra", "skill_ids": ["sk_0008", "sk_0010", "sk_0007"], "n_tokens": 164, "success": true}
+{"ts": "2026-09-16T06:23:59.056517+00:00", "problem_idx": 141, "topic": "geometry", "skill_ids": ["sk_0015", "sk_0008", "sk_0003"], "n_tokens": 175, "success": false}
+{"ts": "2026-09-16T06:23:59.058755+00:00", "problem_idx": 142, "topic": "combinatorics", "skill_ids": ["sk_0011", "sk_0007", "sk_0015"], "n_tokens": 182, "success": false}
+{"ts": "2026-09-16T06:23:59.060612+00:00", "problem_idx": 143, "topic": "combinatorics", "skill_ids": ["sk_0011", "sk_0007", "sk_0012"], "n_tokens": 186, "success": false}

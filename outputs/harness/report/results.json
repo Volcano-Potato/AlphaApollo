@@ -1,0 +1,445 @@
+{
+  "adaptation": {
+    "baseline": {
+      "n": 144,
+      "pass1_round0": 0.2222222222222222,
+      "pass_final": 0.2152777777777778,
+      "n_lost": 0
+    },
+    "raw": {
+      "n": 144,
+      "pass1_round0": 0.16666666666666666,
+      "pass_final": 0.2152777777777778,
+      "n_lost": 0
+    },
+    "evo": {
+      "n": 144,
+      "pass1_round0": 0.2361111111111111,
+      "pass_final": 0.24305555555555555,
+      "n_lost": 0
+    }
+  },
+  "heldout": {
+    "baseline": {
+      "n": 30,
+      "pass1_round0": 0.13333333333333333,
+      "pass_final": 0.1,
+      "n_lost": 0
+    },
+    "raw": {
+      "n": 30,
+      "pass1_round0": 0.23333333333333334,
+      "pass_final": 0.23333333333333334,
+      "n_lost": 0
+    },
+    "evo": {
+      "n": 30,
+      "pass1_round0": 0.13333333333333333,
+      "pass_final": 0.16666666666666666,
+      "n_lost": 0
+    }
+  },
+  "comparison": {
+    "n_common": 144,
+    "n_total": 144,
+    "dropped_by_arm": {
+      "baseline": [],
+      "raw": [],
+      "evo": []
+    },
+    "on_common": {
+      "baseline": {
+        "n": 144,
+        "pass1_round0": 0.2222222222222222,
+        "pass_final": 0.2152777777777778,
+        "n_lost": 0
+      },
+      "raw": {
+        "n": 144,
+        "pass1_round0": 0.16666666666666666,
+        "pass_final": 0.2152777777777778,
+        "n_lost": 0
+      },
+      "evo": {
+        "n": 144,
+        "pass1_round0": 0.2361111111111111,
+        "pass_final": 0.24305555555555555,
+        "n_lost": 0
+      }
+    },
+    "on_own": {
+      "baseline": {
+        "n": 144,
+        "pass1_round0": 0.2222222222222222,
+        "pass_final": 0.2152777777777778,
+        "n_lost": 0
+      },
+      "raw": {
+        "n": 144,
+        "pass1_round0": 0.16666666666666666,
+        "pass_final": 0.2152777777777778,
+        "n_lost": 0
+      },
+      "evo": {
+        "n": 144,
+        "pass1_round0": 0.2361111111111111,
+        "pass_final": 0.24305555555555555,
+        "n_lost": 0
+      }
+    }
+  },
+  "by_topic": {
+    "baseline": {
+      "algebra": {
+        "n": 30,
+        "pass1_round0": 0.3333333333333333,
+        "pass_final": 0.36666666666666664
+      },
+      "combinatorics": {
+        "n": 33,
+        "pass1_round0": 0.18181818181818182,
+        "pass_final": 0.12121212121212122
+      },
+      "geometry": {
+        "n": 49,
+        "pass1_round0": 0.14285714285714285,
+        "pass_final": 0.14285714285714285
+      },
+      "number_theory": {
+        "n": 32,
+        "pass1_round0": 0.28125,
+        "pass_final": 0.28125
+      }
+    },
+    "raw": {
+      "algebra": {
+        "n": 30,
+        "pass1_round0": 0.16666666666666666,
+        "pass_final": 0.36666666666666664
+      },
+      "combinatorics": {
+        "n": 33,
+        "pass1_round0": 0.09090909090909091,
+        "pass_final": 0.09090909090909091
+      },
+      "geometry": {
+        "n": 49,
+        "pass1_round0": 0.1836734693877551,
+        "pass_final": 0.16326530612244897
+      },
+      "number_theory": {
+        "n": 32,
+        "pass1_round0": 0.21875,
+        "pass_final": 0.28125
+      }
+    },
+    "evo": {
+      "algebra": {
+        "n": 30,
+        "pass1_round0": 0.5,
+        "pass_final": 0.5333333333333333
+      },
+      "combinatorics": {
+        "n": 33,
+        "pass1_round0": 0.09090909090909091,
+        "pass_final": 0.15151515151515152
+      },
+      "geometry": {
+        "n": 49,
+        "pass1_round0": 0.12244897959183673,
+        "pass_final": 0.14285714285714285
+      },
+      "number_theory": {
+        "n": 32,
+        "pass1_round0": 0.3125,
+        "pass_final": 0.21875
+      }
+    }
+  },
+  "curve": {
+    "baseline": [
+      {
+        "window": "0-24",
+        "n": 25,
+        "pass1_round0": 0.24,
+        "pass_final": 0.24
+      },
+      {
+        "window": "25-49",
+        "n": 25,
+        "pass1_round0": 0.24,
+        "pass_final": 0.32
+      },
+      {
+        "window": "50-74",
+        "n": 25,
+        "pass1_round0": 0.2,
+        "pass_final": 0.16
+      },
+      {
+        "window": "75-99",
+        "n": 25,
+        "pass1_round0": 0.36,
+        "pass_final": 0.28
+      },
+      {
+        "window": "100-124",
+        "n": 25,
+        "pass1_round0": 0.24,
+        "pass_final": 0.2
+      },
+      {
+        "window": "125-149",
+        "n": 19,
+        "pass1_round0": 0.0,
+        "pass_final": 0.05263157894736842
+      }
+    ],
+    "raw": [
+      {
+        "window": "0-24",
+        "n": 25,
+        "pass1_round0": 0.2,
+        "pass_final": 0.2
+      },
+      {
+        "window": "25-49",
+        "n": 25,
+        "pass1_round0": 0.16,
+        "pass_final": 0.28
+      },
+      {
+        "window": "50-74",
+        "n": 25,
+        "pass1_round0": 0.16,
+        "pass_final": 0.24
+      },
+      {
+        "window": "75-99",
+        "n": 25,
+        "pass1_round0": 0.24,
+        "pass_final": 0.32
+      },
+      {
+        "window": "100-124",
+        "n": 25,
+        "pass1_round0": 0.08,
+        "pass_final": 0.08
+      },
+      {
+        "window": "125-149",
+        "n": 19,
+        "pass1_round0": 0.15789473684210525,
+        "pass_final": 0.15789473684210525
+      }
+    ],
+    "evo": [
+      {
+        "window": "0-24",
+        "n": 25,
+        "pass1_round0": 0.28,
+        "pass_final": 0.28
+      },
+      {
+        "window": "25-49",
+        "n": 25,
+        "pass1_round0": 0.2,
+        "pass_final": 0.32
+      },
+      {
+        "window": "50-74",
+        "n": 25,
+        "pass1_round0": 0.2,
+        "pass_final": 0.16
+      },
+      {
+        "window": "75-99",
+        "n": 25,
+        "pass1_round0": 0.32,
+        "pass_final": 0.36
+      },
+      {
+        "window": "100-124",
+        "n": 25,
+        "pass1_round0": 0.24,
+        "pass_final": 0.16
+      },
+      {
+        "window": "125-149",
+        "n": 19,
+        "pass1_round0": 0.15789473684210525,
+        "pass_final": 0.15789473684210525
+      }
+    ]
+  },
+  "cost": {
+    "baseline": {
+      "calls_solver": 1468,
+      "calls_mgmt": 0,
+      "calls_by_role": {
+        "solver": 1468
+      },
+      "calls_unscoped": 0,
+      "tokens_in": 1335354,
+      "tokens_out": 1664451,
+      "calls_per_problem": 10.194444444444445
+    },
+    "raw": {
+      "calls_solver": 1448,
+      "calls_mgmt": 144,
+      "calls_by_role": {
+        "raw_summarizer": 144,
+        "solver": 1448
+      },
+      "calls_unscoped": 0,
+      "tokens_in": 1642037,
+      "tokens_out": 1612249,
+      "calls_per_problem": 11.055555555555555
+    },
+    "evo": {
+      "calls_solver": 1228,
+      "calls_mgmt": 321,
+      "calls_by_role": {
+        "general_curator": 18,
+        "reflect": 109,
+        "selector": 136,
+        "solver": 1228,
+        "topic_curator": 58
+      },
+      "calls_unscoped": 0,
+      "tokens_in": 1526851,
+      "tokens_out": 1088499,
+      "calls_per_problem": 10.756944444444445
+    }
+  },
+  "growth": {
+    "evo": [
+      {
+        "step": 7,
+        "n_general": 1,
+        "n_topic": 5,
+        "total_tokens": 398,
+        "mean_skill_tokens": 66.33333333333333
+      },
+      {
+        "step": 15,
+        "n_general": 2,
+        "n_topic": 7,
+        "total_tokens": 600,
+        "mean_skill_tokens": 66.66666666666667
+      },
+      {
+        "step": 23,
+        "n_general": 3,
+        "n_topic": 7,
+        "total_tokens": 647,
+        "mean_skill_tokens": 64.7
+      },
+      {
+        "step": 31,
+        "n_general": 3,
+        "n_topic": 9,
+        "total_tokens": 768,
+        "mean_skill_tokens": 64.0
+      },
+      {
+        "step": 39,
+        "n_general": 3,
+        "n_topic": 9,
+        "total_tokens": 787,
+        "mean_skill_tokens": 65.58333333333333
+      },
+      {
+        "step": 47,
+        "n_general": 3,
+        "n_topic": 9,
+        "total_tokens": 781,
+        "mean_skill_tokens": 65.08333333333333
+      },
+      {
+        "step": 55,
+        "n_general": 5,
+        "n_topic": 9,
+        "total_tokens": 913,
+        "mean_skill_tokens": 65.21428571428571
+      },
+      {
+        "step": 63,
+        "n_general": 5,
+        "n_topic": 9,
+        "total_tokens": 912,
+        "mean_skill_tokens": 65.14285714285714
+      },
+      {
+        "step": 71,
+        "n_general": 5,
+        "n_topic": 9,
+        "total_tokens": 887,
+        "mean_skill_tokens": 63.357142857142854
+      },
+      {
+        "step": 79,
+        "n_general": 5,
+        "n_topic": 9,
+        "total_tokens": 891,
+        "mean_skill_tokens": 63.642857142857146
+      },
+      {
+        "step": 87,
+        "n_general": 5,
+        "n_topic": 9,
+        "total_tokens": 876,
+        "mean_skill_tokens": 62.57142857142857
+      },
+      {
+        "step": 95,
+        "n_general": 5,
+        "n_topic": 9,
+        "total_tokens": 871,
+        "mean_skill_tokens": 62.214285714285715
+      },
+      {
+        "step": 103,
+        "n_general": 5,
+        "n_topic": 10,
+        "total_tokens": 912,
+        "mean_skill_tokens": 60.8
+      },
+      {
+        "step": 111,
+        "n_general": 5,
+        "n_topic": 10,
+        "total_tokens": 908,
+        "mean_skill_tokens": 60.53333333333333
+      },
+      {
+        "step": 119,
+        "n_general": 5,
+        "n_topic": 11,
+        "total_tokens": 981,
+        "mean_skill_tokens": 61.3125
+      },
+      {
+        "step": 127,
+        "n_general": 5,
+        "n_topic": 11,
+        "total_tokens": 977,
+        "mean_skill_tokens": 61.0625
+      },
+      {
+        "step": 135,
+        "n_general": 5,
+        "n_topic": 11,
+        "total_tokens": 978,
+        "mean_skill_tokens": 61.125
+      },
+      {
+        "step": 143,
+        "n_general": 5,
+        "n_topic": 11,
+        "total_tokens": 1003,
+        "mean_skill_tokens": 62.6875
+      }
+    ]
+  }
+}

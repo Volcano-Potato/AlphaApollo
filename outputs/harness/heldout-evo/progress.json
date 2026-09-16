@@ -1,0 +1,10 @@
+{
+  "completed_batches": 4,
+  "fingerprint": {
+    "stream_path": "./data/harness/heldout.parquet",
+    "arm": "evo",
+    "batch_size": 8,
+    "seed": 1234,
+    "frozen": true
+  }
+}

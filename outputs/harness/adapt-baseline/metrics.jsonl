@@ -1,0 +1,162 @@
+{"step": 0, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 1, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 2, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 3, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 4, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 5, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 6, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 7, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 7, "calls/solver": 63, "tokens/solver_in": 71878, "tokens/solver_out": 60155, "calls/solver_side_total": 63, "calls/mgmt_side_total": 0}
+{"step": 8, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 9, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 10, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 11, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 12, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 13, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 14, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 15, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 15, "calls/solver": 139, "tokens/solver_in": 144757, "tokens/solver_out": 131160, "calls/solver_side_total": 139, "calls/mgmt_side_total": 0}
+{"step": 16, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 17, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 18, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 19, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 20, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 21, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 22, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 23, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 23, "calls/solver": 222, "tokens/solver_in": 206868, "tokens/solver_out": 209313, "calls/solver_side_total": 222, "calls/mgmt_side_total": 0}
+{"step": 24, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 25, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 26, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 27, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 28, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 29, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 30, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 31, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 31, "calls/solver": 309, "tokens/solver_in": 261920, "tokens/solver_out": 277409, "calls/solver_side_total": 309, "calls/mgmt_side_total": 0}
+{"step": 32, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 33, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 34, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 35, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 36, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 37, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 38, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 39, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 39, "calls/solver": 384, "tokens/solver_in": 340957, "tokens/solver_out": 365194, "calls/solver_side_total": 384, "calls/mgmt_side_total": 0}
+{"step": 40, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 41, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 42, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 43, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 44, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 45, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 46, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 47, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 47, "calls/solver": 453, "tokens/solver_in": 421679, "tokens/solver_out": 439853, "calls/solver_side_total": 453, "calls/mgmt_side_total": 0}
+{"step": 48, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 49, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 50, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 51, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 52, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 53, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 54, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 55, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 55, "calls/solver": 533, "tokens/solver_in": 520315, "tokens/solver_out": 549779, "calls/solver_side_total": 533, "calls/mgmt_side_total": 0}
+{"step": 56, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 57, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 58, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 59, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 60, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 61, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 62, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 63, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 63, "calls/solver": 612, "tokens/solver_in": 595721, "tokens/solver_out": 609283, "calls/solver_side_total": 612, "calls/mgmt_side_total": 0}
+{"step": 64, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 65, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 66, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 67, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 68, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 69, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 70, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 71, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 71, "calls/solver": 701, "tokens/solver_in": 667286, "tokens/solver_out": 749048, "calls/solver_side_total": 701, "calls/mgmt_side_total": 0}
+{"step": 72, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 73, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 74, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 75, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 76, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 77, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 78, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 79, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 79, "calls/solver": 788, "tokens/solver_in": 747220, "tokens/solver_out": 873942, "calls/solver_side_total": 788, "calls/mgmt_side_total": 0}
+{"step": 80, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 81, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 82, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 83, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 84, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 85, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 86, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 87, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 87, "calls/solver": 886, "tokens/solver_in": 809516, "tokens/solver_out": 991618, "calls/solver_side_total": 886, "calls/mgmt_side_total": 0}
+{"step": 88, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 89, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 90, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 91, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 92, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 93, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 94, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 95, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 95, "calls/solver": 963, "tokens/solver_in": 882788, "tokens/solver_out": 1070333, "calls/solver_side_total": 963, "calls/mgmt_side_total": 0}
+{"step": 96, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 97, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 98, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 99, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 100, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 101, "adapt/pass1_round0": 1, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 102, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 103, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 103, "calls/solver": 1061, "tokens/solver_in": 959546, "tokens/solver_out": 1170173, "calls/solver_side_total": 1061, "calls/mgmt_side_total": 0}
+{"step": 104, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 105, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 106, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 107, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 108, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 109, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 110, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 111, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 111, "calls/solver": 1139, "tokens/solver_in": 1031407, "tokens/solver_out": 1244010, "calls/solver_side_total": 1139, "calls/mgmt_side_total": 0}
+{"step": 112, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 113, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 114, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 115, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 116, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "geometry"}
+{"step": 117, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 118, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 119, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 119, "calls/solver": 1224, "tokens/solver_in": 1087706, "tokens/solver_out": 1404465, "calls/solver_side_total": 1224, "calls/mgmt_side_total": 0}
+{"step": 120, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 121, "adapt/pass1_round0": 1, "adapt/pass_final": 1, "adapt/error": 0, "topic": "number_theory"}
+{"step": 122, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 123, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 124, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 125, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 126, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 127, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 127, "calls/solver": 1302, "tokens/solver_in": 1163380, "tokens/solver_out": 1501691, "calls/solver_side_total": 1302, "calls/mgmt_side_total": 0}
+{"step": 128, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 129, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 130, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 131, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 132, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "number_theory"}
+{"step": 133, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 134, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 135, "adapt/pass1_round0": 0, "adapt/pass_final": 1, "adapt/error": 0, "topic": "algebra"}
+{"step": 135, "calls/solver": 1386, "tokens/solver_in": 1261852, "tokens/solver_out": 1593724, "calls/solver_side_total": 1386, "calls/mgmt_side_total": 0}
+{"step": 136, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 137, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 138, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 139, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 140, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "algebra"}
+{"step": 141, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "geometry"}
+{"step": 142, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 143, "adapt/pass1_round0": 0, "adapt/pass_final": 0, "adapt/error": 0, "topic": "combinatorics"}
+{"step": 143, "calls/solver": 1468, "tokens/solver_in": 1335354, "tokens/solver_out": 1664451, "calls/solver_side_total": 1468, "calls/mgmt_side_total": 0}

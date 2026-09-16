@@ -1,0 +1,113 @@
+{
+  "skills": {
+    "n_general": 5,
+    "n_topic": 11,
+    "n_topic_by_topic": {
+      "adjacent_grouping_counting": 1,
+      "case_analysis": 1,
+      "combinatorial_constraints": 1,
+      "combinatorial_reasoning": 1,
+      "coordinate_geometry_setup": 1,
+      "equiangular_hexagon_properties": 1,
+      "factorization_conditions": 1,
+      "geometric_constraints": 1,
+      "isosceles_triangle_counting": 1,
+      "logical_reasoning": 1,
+      "sequential_dependencies": 1
+    },
+    "total_tokens": 1003
+  },
+  "edits": {
+    "total": 209,
+    "accepted": 89,
+    "rejected": 120,
+    "by_op": {
+      "ADD": 17,
+      "MERGE": 105,
+      "REVISE": 17,
+      "SKIP": 70
+    }
+  },
+  "selection": {
+    "n_problems": 144,
+    "total_injected_tokens": 26648,
+    "mean_injected_tokens": 185.05555555555554
+  },
+  "usage": {
+    "sk_0001": {
+      "n_selected": 18,
+      "n_selected_success": 9,
+      "present_in_final_harness": true
+    },
+    "sk_0002": {
+      "n_selected": 9,
+      "n_selected_success": 2,
+      "present_in_final_harness": true
+    },
+    "sk_0003": {
+      "n_selected": 28,
+      "n_selected_success": 6,
+      "present_in_final_harness": true
+    },
+    "sk_0005": {
+      "n_selected": 1,
+      "n_selected_success": 0,
+      "present_in_final_harness": true
+    },
+    "sk_0006": {
+      "n_selected": 118,
+      "n_selected_success": 27,
+      "present_in_final_harness": true
+    },
+    "sk_0007": {
+      "n_selected": 47,
+      "n_selected_success": 7,
+      "present_in_final_harness": true
+    },
+    "sk_0008": {
+      "n_selected": 74,
+      "n_selected_success": 20,
+      "present_in_final_harness": true
+    },
+    "sk_0009": {
+      "n_selected": 11,
+      "n_selected_success": 3,
+      "present_in_final_harness": true
+    },
+    "sk_0010": {
+      "n_selected": 12,
+      "n_selected_success": 2,
+      "present_in_final_harness": true
+    },
+    "sk_0011": {
+      "n_selected": 16,
+      "n_selected_success": 2,
+      "present_in_final_harness": true
+    },
+    "sk_0012": {
+      "n_selected": 31,
+      "n_selected_success": 6,
+      "present_in_final_harness": true
+    },
+    "sk_0013": {
+      "n_selected": 31,
+      "n_selected_success": 5,
+      "present_in_final_harness": true
+    },
+    "sk_0014": {
+      "n_selected": 26,
+      "n_selected_success": 6,
+      "present_in_final_harness": true
+    },
+    "sk_0015": {
+      "n_selected": 15,
+      "n_selected_success": 2,
+      "present_in_final_harness": true
+    },
+    "sk_0016": {
+      "n_selected": 1,
+      "n_selected_success": 0,
+      "present_in_final_harness": true
+    }
+  }
+}
