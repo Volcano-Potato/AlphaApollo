@@ -133,6 +133,50 @@ def adaptation_curve(run: RunData, window: int = 25, only: set[int] | None = Non
     ]
 
 
+def cumulative_curve(run: RunData, window: int = 25, only: set[int] | None = None) -> list[dict]:
+    """Running accuracy after each completed problem, in stream order.
+
+    :func:`adaptation_curve` cuts the stream into *disjoint* windows, which is the right shape for
+    a markdown table -- a handful of rows a reader can scan. It is the wrong shape for a chart: a
+    six-point step function is not a curve, and the report's tables already cover it.
+
+    This is the complementary, per-problem view, and it carries both readings of "over time" so a
+    dashboard can plot them on one x-axis:
+
+    * ``cum_*`` -- the mean over every completed problem so far. This is the arm's headline number
+      as it converges, and the curve that answers "is this arm ahead, and since when".
+    * ``roll_*`` -- the mean over the trailing ``window`` completed problems. The cumulative mean
+      goes deaf to late changes (by problem 120, one flip moves it by <1pt), which is exactly where
+      a cross-problem mechanism's effect would show up, so the trailing mean is what keeps that
+      visible at the cost of being noisier.
+
+    ``n`` and ``n_roll`` travel with the rates for the same reason the window tables carry ``n``:
+    an early point is a mean over three problems and must be readable as one.
+    """
+    idxs = sorted(run.completed if only is None else (run.completed & only))
+    keys = ("adapt/pass1_round0", "adapt/pass_final")
+    out: list[dict] = []
+    seen: list[dict] = []
+    totals = dict.fromkeys(keys, 0)
+    for i in idxs:
+        row = run.problems[i]
+        seen.append(row)
+        for k in keys:
+            totals[k] += int(row.get(k, 0) or 0)
+        n = len(seen)
+        trailing = seen[-window:]
+        out.append({
+            "problem_idx": i,
+            "n": n,
+            "cum_pass1_round0": totals["adapt/pass1_round0"] / n,
+            "cum_pass_final": totals["adapt/pass_final"] / n,
+            "n_roll": len(trailing),
+            "roll_pass1_round0": _rate(trailing, "adapt/pass1_round0"),
+            "roll_pass_final": _rate(trailing, "adapt/pass_final"),
+        })
+    return out
+
+
 def by_topic(run: RunData, only: set[int] | None = None) -> dict[str, dict]:
     """Per-topic accuracy -- the *performance* breakdown, which is a different question from
     ``export.build_report``'s ``n_topic_by_topic`` (how many skills the harness holds per topic).

@@ -153,4 +153,10 @@ outputs/*
 !outputs/harness/
 outputs/harness/*/trajectories/
 outputs/harness/*/wandb/
+# Local wandb bookkeeping, not evidence: the run id, the record of whether this machine has
+# already pushed the derived metrics to that run, and the dry-run preview. All three describe
+# this checkout's relationship to a wandb account rather than anything about the experiment --
+# the numbers themselves are in metrics.jsonl and the selection logs, which are committed.
 outputs/harness/*/wandb_run_id.txt
+outputs/harness/*/wandb_backfill.json
+outputs/harness/*/wandb_backfill_preview.json
