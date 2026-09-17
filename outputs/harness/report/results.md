@@ -144,6 +144,16 @@ Compared on the 144 of 144 problems every arm completed. Problems each arm lost:
 
 Management calls are reported separately from solver calls: an arm that wins on accuracy while spending materially more calls has not obviously won. A non-zero `unscoped` column is an instrumentation bug, not a cost category.
 
+### Held-out (frozen, no updates)
+
+| arm | solver calls | mgmt calls | calls/problem | tokens in | tokens out | total tokens |
+|---|---|---|---|---|---|---|
+| baseline | 309 | 0 | 10.30 | 289,078 | 286,503 | 575,581 |
+| raw | 298 | 0 | 9.93 | 323,470 | 266,737 | 590,207 |
+| evo | 263 | 30 | 9.77 | 359,659 | 227,676 | 587,335 |
+
+Raw token counts here rather than the M-rounded adaptation table above: the held-out spread across arms is a few percent of the total, and rounding to millions would hide exactly that. Across the 30 problems/arm, total tokens span 2.5% of the smallest. On adaptation, evo's total token count was -12.8% relative to baseline; on held-out it is +2.0% -- if that saving was meant to generalize, it does not repeat here. With only 30 problems per arm and a single seed, this is as consistent with sampling noise as with a real reversal, not evidence either way.
+
 ## 6. Skill usage frequency
 
 **evo** — 15 skill(s) were injected at least once

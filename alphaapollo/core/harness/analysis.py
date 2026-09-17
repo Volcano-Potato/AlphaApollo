@@ -438,10 +438,12 @@ def render(adapt: dict[str, RunData], heldout: dict[str, RunData],
 
     lines += ["## 5. Injected context and model calls", ""]
     rows = []
+    adapt_totals: dict[str, int] = {}
     for name, run in adapt.items():
         if not run.problems:
             continue  # an arm that has not run is absent, not an arm that cost nothing
         c = cost(run)
+        adapt_totals[name] = c["tokens_in"] + c["tokens_out"]
         inj = injected_context(store_roots[name], set(run.problems)) if name in store_roots else {}
         rows.append([name, c["calls_solver"], c["calls_mgmt"],
                      f"{c['calls_per_problem']:.1f}",
@@ -452,6 +454,41 @@ def render(adapt: dict[str, RunData], heldout: dict[str, RunData],
     lines += ["Management calls are reported separately from solver calls: an arm that wins on "
               "accuracy while spending materially more calls has not obviously won. A non-zero "
               "`unscoped` column is an instrumentation bug, not a cost category.", ""]
+
+    lines += ["### Held-out (frozen, no updates)", ""]
+    # This table used to be absent: the loop just above only ever ran over `adapt`, so a held-out
+    # per-arm token split existed in each run's own metrics.jsonl but was never rendered anywhere.
+    # `TASK_C_REPORT.md §4.7`'s held-out table was hand-typed from that raw jsonl and covered only
+    # calls, not tokens -- which is why it is filled in here from the same `cost()` this module
+    # already trusted for the adaptation table, rather than re-derived by hand a second time.
+    held_rows = {name: run for name, run in heldout.items() if run.problems}
+    if not held_rows:
+        lines += ["_Not run yet._", ""]
+    else:
+        rows, held_totals = [], {}
+        for name, run in held_rows.items():
+            c = cost(run)
+            held_totals[name] = c["tokens_in"] + c["tokens_out"]
+            rows.append([name, c["calls_solver"], c["calls_mgmt"], f"{c['calls_per_problem']:.2f}",
+                         f"{c['tokens_in']:,}", f"{c['tokens_out']:,}", f"{held_totals[name]:,}"])
+        lines += _table(["arm", "solver calls", "mgmt calls", "calls/problem", "tokens in",
+                         "tokens out", "total tokens"], rows)
+        n_problems = len(next(iter(held_rows.values())).problems)
+        note = ("Raw token counts here rather than the M-rounded adaptation table above: the "
+                "held-out spread across arms is a few percent of the total, and rounding to "
+                "millions would hide exactly that.")
+        if len(held_totals) > 1:
+            spread = (max(held_totals.values()) - min(held_totals.values())) / min(held_totals.values())
+            note += f" Across the {n_problems} problems/arm, total tokens span {spread * 100:.1f}% of the smallest."
+        if {"baseline", "evo"} <= held_totals.keys() and {"baseline", "evo"} <= adapt_totals.keys():
+            adapt_delta = (adapt_totals["evo"] - adapt_totals["baseline"]) / adapt_totals["baseline"]
+            held_delta = (held_totals["evo"] - held_totals["baseline"]) / held_totals["baseline"]
+            note += (f" On adaptation, evo's total token count was {adapt_delta * 100:+.1f}% "
+                     f"relative to baseline; on held-out it is {held_delta * 100:+.1f}% -- if that "
+                     f"saving was meant to generalize, it does not repeat here. With only "
+                     f"{n_problems} problems per arm and a single seed, this is as consistent with "
+                     f"sampling noise as with a real reversal, not evidence either way.")
+        lines += [note, ""]
 
     lines += ["## 6. Skill usage frequency", ""]
     for name in ("evo", "raw"):
@@ -511,6 +548,7 @@ def main(out_dir: str = "./outputs/harness/report", root: str = "./outputs/harne
         "by_topic": {a: by_topic(r) for a, r in adapt.items() if r.problems},
         "curve": {a: adaptation_curve(r, window) for a, r in adapt.items() if r.problems},
         "cost": {a: cost(r) for a, r in adapt.items() if r.problems},
+        "cost_heldout": {a: cost(r) for a, r in heldout.items() if r.problems},
         "growth": {a: harness_growth(r) for a, r in adapt.items() if r.harness_series},
     }
     (out / "results.json").write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str) + "\n",

@@ -312,6 +312,42 @@
       "calls_per_problem": 10.756944444444445
     }
   },
+  "cost_heldout": {
+    "baseline": {
+      "calls_solver": 309,
+      "calls_mgmt": 0,
+      "calls_by_role": {
+        "solver": 309
+      },
+      "calls_unscoped": 0,
+      "tokens_in": 289078,
+      "tokens_out": 286503,
+      "calls_per_problem": 10.3
+    },
+    "raw": {
+      "calls_solver": 298,
+      "calls_mgmt": 0,
+      "calls_by_role": {
+        "solver": 298
+      },
+      "calls_unscoped": 0,
+      "tokens_in": 323470,
+      "tokens_out": 266737,
+      "calls_per_problem": 9.933333333333334
+    },
+    "evo": {
+      "calls_solver": 263,
+      "calls_mgmt": 30,
+      "calls_by_role": {
+        "selector": 30,
+        "solver": 263
+      },
+      "calls_unscoped": 0,
+      "tokens_in": 359659,
+      "tokens_out": 227676,
+      "calls_per_problem": 9.766666666666667
+    }
+  },
   "growth": {
     "evo": [
       {

@@ -345,11 +345,13 @@ evo 的 321 次管理调用：`selector` 136、`reflect` 109、`topic_curator` 5
 
 **held-out（每臂 30 题，frozen）**
 
-| arm | solver | 管理 | 合计 | 调用/题 |
-|---|---|---|---|---|
-| baseline | 309 | 0 | 309 | 10.3 |
-| raw | 298 | **0** | 298 | 9.9 |
-| evo | 263 | 30（**全部是 `selector`**） | 293 | 9.8 |
+| arm | solver | 管理 | 合计 | 调用/题 | solver token | 管理 token | **总 token** |
+|---|---|---|---|---|---|---|---|
+| baseline | 309 | 0 | 309 | 10.3 | 575,581 | 0 | 575,581 |
+| raw | 298 | **0** | 298 | 9.9 | 590,207 | 0 | 590,207 |
+| evo | 263 | 30（**全部是 `selector`**） | 293 | 9.8 | 564,935 | 22,400 | **587,335** |
+
+调用数此前就有；token 列是补的 —— `analysis.py` 的 `render()` 此前只把这张成本表套在 `adapt` 上（§5 那张表），从没对 `heldout` 跑过同一段逻辑，held-out 各 run 的 `metrics.jsonl` 里其实一直就有这些数字。现在 `render()` 已经把 held-out 也覆盖到（新增的"Held-out (frozen, no updates)"小节），`results.md` 与此表同步生成、互为校验。
 
 **注入 context 的 token**
 
@@ -367,6 +369,7 @@ evo 的 321 次管理调用：`selector` 136、`reflect` 109、`topic_curator` 5
 1. **evo 多花 20.7% 的管理调用，总 token 反而比 baseline 少 12.8%** —— solver 输出从 1.66M 降到 1.06M（−36%），注入 skill 让 rollout 变短了。"Evo 更贵"在本数据上只对**调用次数**成立（+5.5%），对 token 不成立。
 2. **预算上限 800，evo 实际只用到 185（23%）；Raw 注入量是它的 2.1 倍，held-out 上还赢了。** evo 的劣势**不能**归因于"注入得不够多"。
 3. **两臂各有 8 题零注入，正好是 batch 0 的 p_0–p_7**（harness 当时为空）。这是"一道题不可能被自己产生的 skill 影响"的直接数据证据。
+4. **"少花 token"这个结论在 held-out 上没有复现。** 三臂 held-out 总 token 只相差 2.5%，evo 比 baseline 高 **+2.0%**（adaptation 是 −12.8%，方向相反）。evo 的 solver 输出（226,950）仍是三臂最小，"注入 skill 缩短 rollout"这条机制看起来还在起作用；但它被 evo 更高的 solver 输入（337,985，三臂最高）抵消了。**仅 30 题、单 seed**，这个 +2.0% 既可能是真实反转也可能是噪声，不构成证据 —— 和 §4.3 主结果里"held-out 样本太小、分辨率不足"是同一个限制的另一处体现。
 
 **开销口径主动选了对自己不利的算法。** `raw_summarizer` 单独成 role、不复用 `summarizer`（后者已命名上游**题内**的求解侧助手，baseline 本来就有）。把 Raw 的每题摘要折进去，会让 Raw 在成本报告里显得几乎不花钱，而 Evo 的 reflect/curate 却被正确计为管理开销 —— 那是一个**会错误地削弱本项目自身论点**的数字（commit `7b4336d`）。
 
